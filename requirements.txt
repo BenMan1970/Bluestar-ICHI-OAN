@@ -1,4 +1,5 @@
-streamlit
-pandas
-oandapyV20
-pandas-ta
+streamlit==1.33.0
+pandas==2.2.1
+oandapyV20==0.7.3
+pandas-ta==0.3.14b0
+numpy<2.0
