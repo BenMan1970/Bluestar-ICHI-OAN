@@ -9,8 +9,6 @@ import os
 st.set_page_config(layout="wide")
 
 INSTRUMENTS_TO_SCAN = [
-    # Liste volontairement réduite pour des tests plus rapides.
-    # Remettez la liste complète quand vous le souhaitez.
     "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
     "EUR_JPY", "GBP_JPY", "XAU_USD", "US30_USD", "NAS100_USD", "SPX500_USD"
 ]
@@ -28,7 +26,7 @@ except Exception as e:
     st.error(f"Impossible de se connecter à l'API OANDA. Erreur: {e}")
     st.stop()
 
-# --- Fonctions (inchangées) ---
+# --- Fonctions ---
 @st.cache_data(ttl=60)
 def fetch_candles(instrument, timeframe, count=200):
     params = {"count": count, "granularity": timeframe}
@@ -46,78 +44,108 @@ def fetch_candles(instrument, timeframe, count=200):
     except Exception:
         return None
 
-def get_ema_trend(df):
-    if df is None or len(df) < 50: return "Indisponible"
-    df['ema20'] = ta.ema(df['close'], length=20)
-    df['ema50'] = ta.ema(df['close'], length=50)
-    last = df.iloc[-1]
-    if pd.isna(last['ema20']) or pd.isna(last['ema50']): return "Indisponible"
-    if last['ema20'] > last['ema50']: return "Haussier"
-    return "Baissier"
+def get_ichimoku_trend(df):
+    """Détermine la tendance basée sur la position du prix par rapport au Kumo."""
+    if df is None or len(df) < 52: return "Indisponible"
+    # S'assurer que les indicateurs sont présents
+    if not all(col in df.columns for col in ["senkou_a", "senkou_b"]):
+        df.ta.ichimoku(append=True)
+        df.rename(columns={"ISA_9": "senkou_a", "ISB_26": "senkou_b"}, inplace=True)
 
-def analyze_kumo_breakout(instrument, main_tf, sub_tf1, sub_tf2):
-    df = fetch_candles(instrument, main_tf)
-    if df is None or len(df) < 52: return None
-    df.ta.ichimoku(append=True)
-    df.rename(columns={"ITS_9": "tenkan", "IKS_26": "kijun", "ISA_9": "senkou_a", "ISB_26": "senkou_b"}, inplace=True)
-    for i in range(2, 4):
-        last, previous = df.iloc[-i], df.iloc[-i-1]
-        if pd.isna(last['senkou_a']) or pd.isna(previous['senkou_a']): continue
-        kumo_top_last, kumo_bottom_last = max(last['senkou_a'], last['senkou_b']), min(last['senkou_a'], last['senkou_b'])
-        kumo_top_prev, kumo_bottom_prev = max(previous['senkou_a'], previous['senkou_b']), min(previous['senkou_a'], previous['senkou_b'])
-        signal_type = None
-        if last['tenkan'] > kumo_top_last and previous['tenkan'] < kumo_top_prev and last['senkou_a'] > last['senkou_b']:
-            signal_type = "Haussier"
-        elif last['tenkan'] < kumo_bottom_last and previous['tenkan'] > kumo_bottom_prev and last['senkou_a'] < last['senkou_b']:
-            signal_type = "Baissier"
-        if signal_type:
-            trend1 = get_ema_trend(fetch_candles(instrument, sub_tf1))
-            trend2 = get_ema_trend(fetch_candles(instrument, sub_tf2))
-            if signal_type == trend1 and signal_type == trend2:
-                return {"Actif": instrument, "Signal": f"✅ Breakout {signal_type}", "Conf. 1": trend1, "Conf. 2": trend2, "Heure (UTC)": last.name.strftime('%Y-%m-%d %H:%M')}
+    last = df.iloc[-1]
+    if pd.isna(last['senkou_a']) or pd.isna(last['senkou_b']): return "Indisponible"
+    
+    kumo_top = max(last['senkou_a'], last['senkou_b'])
+    kumo_bottom = min(last['senkou_a'], last['senkou_b'])
+
+    if last['close'] > kumo_top: return "Haussier"
+    if last['close'] < kumo_bottom: return "Baissier"
+    return "Neutre"
+
+def analyze_signal(instrument, main_tf, confirmation_tf):
+    """
+    Cherche un croisement TK sur main_tf et le valide avec la tendance Ichimoku de confirmation_tf.
+    """
+    df_main = fetch_candles(instrument, main_tf)
+    if df_main is None or len(df_main) < 52: return None
+
+    df_main.ta.ichimoku(append=True)
+    df_main.rename(columns={"ITS_9": "tenkan", "IKS_26": "kijun", "ISA_9": "senkou_a", "ISB_26": "senkou_b"}, inplace=True)
+    
+    last, previous = df_main.iloc[-2], df_main.iloc[-3]
+    if pd.isna(last['tenkan']) or pd.isna(last['senkou_a']): return None
+
+    signal_type = None
+    # --- Déclencheur : Croisement TK ---
+    if last['tenkan'] > last['kijun'] and previous['tenkan'] <= previous['kijun']:
+        signal_type = "Haussier"
+    elif last['tenkan'] < last['kijun'] and previous['tenkan'] >= previous['kijun']:
+        signal_type = "Baissier"
+    
+    if not signal_type: return None
+
+    # --- Filtre 1 : Contexte Kumo sur la timeframe du signal ---
+    kumo_top = max(last['senkou_a'], last['senkou_b'])
+    kumo_bottom = min(last['senkou_a'], last['senkou_b'])
+
+    if signal_type == "Haussier":
+        if not (last['tenkan'] > kumo_top and last['senkou_a'] > last['senkou_b']):
+            return None # Rejet : le croisement n'est pas au-dessus d'un nuage haussier
+    elif signal_type == "Baissier":
+        if not (last['tenkan'] < kumo_bottom and last['senkou_a'] < last['senkou_b']):
+            return None # Rejet : le croisement n'est pas en-dessous d'un nuage baissier
+            
+    # --- Filtre 2 : Confirmation par la tendance Ichimoku de l'autre timeframe ---
+    df_confirmation = fetch_candles(instrument, confirmation_tf)
+    confirmation_trend = get_ichimoku_trend(df_confirmation)
+
+    if signal_type == confirmation_trend:
+        # Signal validé !
+        return {
+            "Actif": instrument,
+            "Signal": f"✅ Croisement {signal_type}",
+            f"Conf. {confirmation_tf} (Ichi)": "👍",
+            "Heure (UTC)": last.name.strftime('%Y-%m-%d %H:%M')
+        }
     return None
 
 # --- Interface Streamlit ---
-st.title("🚀 BlueStar - Scanner de Breakout Ichimoku")
+st.title("🚀 BlueStar - Scanner Ichimoku Pur")
 
-# NOUVEAU : Initialisation de l'état de session
 if 'scan_complete' not in st.session_state:
     st.session_state.scan_complete = False
     st.session_state.results_h4 = pd.DataFrame()
     st.session_state.results_h1 = pd.DataFrame()
 
-# NOUVEAU : Un seul bouton pour lancer le scan complet
 if st.button("Lancer le Scan Complet (H4 & H1)", type="primary"):
     st.session_state.scan_complete = True
-    with st.spinner("Analyse complète en cours... Cela peut prendre un moment."):
+    with st.spinner("Analyse Ichimoku complète en cours..."):
         signals_h4 = []
         signals_h1 = []
         
-        # NOUVEAU : Boucle unique qui fait les deux analyses
         for inst in INSTRUMENTS_TO_SCAN:
-            # Analyse pour H4
-            signal_h4 = analyze_kumo_breakout(inst, "H4", "H1", "M15")
+            # Analyse H4, confirmée par H1
+            signal_h4 = analyze_signal(inst, "H4", "H1")
             if signal_h4:
                 signals_h4.append(signal_h4)
             
-            # Analyse pour H1
-            signal_h1 = analyze_kumo_breakout(inst, "H1", "M15", "M5")
+            # Analyse H1, confirmée par H4
+            signal_h1 = analyze_signal(inst, "H1", "H4")
             if signal_h1:
                 signals_h1.append(signal_h1)
         
         st.session_state.results_h4 = pd.DataFrame(signals_h4)
         st.session_state.results_h1 = pd.DataFrame(signals_h1)
 
-# NOUVEAU : Affichage conditionnel basé sur le fait que le scan a été lancé au moins une fois
 if st.session_state.scan_complete:
     st.subheader("Tableau des Signaux de Fond (H4)")
     if st.session_state.results_h4.empty:
-        st.info("Aucun breakout H4 validé n'a été trouvé.")
+        st.info("Aucun signal H4 validé n'a été trouvé.")
     else:
         st.dataframe(st.session_state.results_h4, use_container_width=True, hide_index=True)
 
     st.subheader("Tableau des Signaux Intraday (H1)")
     if st.session_state.results_h1.empty:
-        st.info("Aucun breakout H1 validé n'a été trouvé.")
+        st.info("Aucun signal H1 validé n'a été trouvé.")
     else:
         st.dataframe(st.session_state.results_h1, use_container_width=True, hide_index=True)
