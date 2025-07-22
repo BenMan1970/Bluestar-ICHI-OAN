@@ -1,59 +1,4 @@
-import streamlit as st
-import pandas as pd
-import pandas_ta as ta
-from oandapyV20 import API
-import oandapyV20.endpoints.instruments as instruments
-import os
-
-# --- Configuration (À METTRE DANS LES SECRETS STREAMLIT) ---
-# Pour le développement local, vous pouvez utiliser des variables d'environnement
-# os.environ['OANDA_ACCESS_TOKEN'] = 'VOTRE_TOKEN'
-# os.environ['OANDA_ACCOUNT_ID'] = 'VOTRE_ACCOUNT_ID'
-
-ACCESS_TOKEN = os.getenv('OANDA_ACCESS_TOKEN', 'METTRE_VOTRE_TOKEN_ICI')
-ACCOUNT_ID = os.getenv('OANDA_ACCOUNT_ID', 'METTRE_VOTRE_ID_ICI')
-
-api = API(access_token=ACCESS_TOKEN, environment="practice") # "practice" ou "live"
-
-# --- Fonctions ---
-
-# Utiliser le cache de Streamlit pour ne pas surcharger l'API
-@st.cache_data(ttl=300) # Cache les données pour 5 minutes (300s)
-def fetch_candles(instrument, timeframe, count):
-    """Récupère les données de chandeliers depuis OANDA."""
-    params = {
-        "count": count,
-        "granularity": timeframe
-    }
-    try:
-        r = instruments.InstrumentsCandles(instrument=instrument, params=params)
-        api.request(r)
-        
-        # Formater les données dans un DataFrame Pandas
-        data = []
-        for candle in r.response['candles']:
-            time = pd.to_datetime(candle['time'])
-            volume = candle['volume']
-            o = float(candle['mid']['o'])
-            h = float(candle['mid']['h'])
-            l = float(candle['mid']['l'])
-            c = float(candle['mid']['c'])
-            data.append([time, o, h, l, c, volume])
-
-        df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-        df.set_index('time', inplace=True)
-        return df
-    except Exception as e:
-        st.error(f"Erreur lors de la récupération des données pour {instrument}: {e}")
-        return None
-
-def add_ichimoku(df):
-    """Ajoute les indicateurs Ichimoku au DataFrame."""
-    if df is not None:
-        # Les noms par défaut sont ITS_9, IKS_26, etc.
-        # On peut les renommer pour plus de clarté si on veut.
-        df.ta.ichimoku(append=True)
-    return df
+# ... (tous vos imports et fonctions restent les mêmes)
 
 # --- Interface Streamlit ---
 st.title("Scanner de Marché Ichimoku")
@@ -74,7 +19,41 @@ if st.button("Lancer le test"):
         df_with_indicators = add_ichimoku(df_candles)
         
         st.success("Données récupérées et indicateurs calculés !")
+        st.dataframe(df_with_indicators.tail(5)) # On affiche juste les 5 dernières pour vérifier
+
+        # --- ÉTAPE 3: DÉTECTION DU CROISEMENT ---
+
+        # 3.A - Renommer les colonnes pour la lisibilité
+        df_with_indicators.rename(columns={
+            "ITS_9": "tenkan",
+            "IKS_26": "kijun",
+            "ISA_26": "senkou_a",
+            "ISB_52": "senkou_b",
+            "ICS_26": "chikou"
+        }, inplace=True)
+
+        # 3.B - Isoler les deux dernières bougies
+        last_two_candles = df_with_indicators.iloc[-2:]
         
-        # Afficher les dernières lignes pour vérifier
-        st.write("Dernières données avec indicateurs Ichimoku :")
-        st.dataframe(df_with_indicators.tail(10))
+        if len(last_two_candles) < 2:
+            st.warning("Pas assez de données pour détecter un croisement.")
+        else:
+            previous_candle = last_two_candles.iloc[0]
+            last_candle = last_two_candles.iloc[1]
+
+            # 3.C - Logique de détection du croisement
+            st.subheader("Résultat de l'analyse du croisement :")
+
+            # Condition pour un croisement haussier
+            if last_candle['tenkan'] > last_candle['kijun'] and previous_candle['tenkan'] <= previous_candle['kijun']:
+                st.success(f"✅ Signal de croisement HAUSSIER détecté sur {instrument_test} !")
+                st.write(f"Heure du signal (UTC) : {last_candle.name}")
+
+            # Condition pour un croisement baissier
+            elif last_candle['tenkan'] < last_candle['kijun'] and previous_candle['tenkan'] >= previous_candle['kijun']:
+                st.error(f"❌ Signal de croisement BAISSIER détecté sur {instrument_test} !")
+                st.write(f"Heure du signal (UTC) : {last_candle.name}")
+
+            else:
+                st.info("Aucun croisement Tenkan/Kijun détecté sur la dernière bougie.")
+       
