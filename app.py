@@ -1,4 +1,62 @@
-# ... (tous vos imports et fonctions restent les mêmes)
+import streamlit as st
+import pandas as pd
+import pandas_ta as ta
+from oandapyV20 import API
+import oandapyV20.endpoints.instruments as instruments
+import os
+
+# --- Configuration des Secrets (Robuste pour Streamlit Cloud) ---
+try:
+    ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
+    ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
+except KeyError:
+    st.error("Erreur: Veuillez configurer les secrets OANDA (OANDA_ACCESS_TOKEN, OANDA_ACCOUNT_ID) dans les paramètres de l'application.")
+    st.stop()
+
+# Initialisation de l'API
+try:
+    api = API(access_token=ACCESS_TOKEN, environment="practice") # "practice" ou "live"
+except Exception as e:
+    st.error(f"Impossible de se connecter à l'API OANDA. Erreur: {e}")
+    st.stop()
+
+
+# --- Fonctions ---
+
+@st.cache_data(ttl=300) # Cache les données pour 5 minutes
+def fetch_candles(instrument, timeframe, count):
+    """Récupère les données de chandeliers depuis OANDA."""
+    params = {
+        "count": count,
+        "granularity": timeframe
+    }
+    try:
+        r = instruments.InstrumentsCandles(instrument=instrument, params=params)
+        api.request(r)
+        
+        data = []
+        for candle in r.response['candles']:
+            time = pd.to_datetime(candle['time'])
+            volume = candle['volume']
+            o = float(candle['mid']['o'])
+            h = float(candle['mid']['h'])
+            l = float(candle['mid']['l'])
+            c = float(candle['mid']['c'])
+            data.append([time, o, h, l, c, volume])
+
+        df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        df.set_index('time', inplace=True)
+        return df
+    except Exception as e:
+        st.error(f"Erreur lors de la récupération des données pour {instrument}: {e}")
+        return None
+
+def add_ichimoku(df):
+    """Ajoute les indicateurs Ichimoku au DataFrame."""
+    if df is not None and not df.empty:
+        df.ta.ichimoku(append=True)
+    return df
+
 
 # --- Interface Streamlit ---
 st.title("Scanner de Marché Ichimoku")
@@ -14,12 +72,12 @@ if st.button("Lancer le test"):
     # Étape 1: Récupérer les données
     df_candles = fetch_candles(instrument_test, timeframe_test, 150)
 
-    if df_candles is not None:
+    if df_candles is not None and not df_candles.empty:
         # Étape 2: Calculer Ichimoku
         df_with_indicators = add_ichimoku(df_candles)
         
         st.success("Données récupérées et indicateurs calculés !")
-        st.dataframe(df_with_indicators.tail(5)) # On affiche juste les 5 dernières pour vérifier
+        st.dataframe(df_with_indicators.tail(5))
 
         # --- ÉTAPE 3: DÉTECTION DU CROISEMENT ---
 
@@ -56,4 +114,6 @@ if st.button("Lancer le test"):
 
             else:
                 st.info("Aucun croisement Tenkan/Kijun détecté sur la dernière bougie.")
+    else:
+        st.error("Impossible de récupérer les données pour l'analyse.")
        
