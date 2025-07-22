@@ -65,12 +65,12 @@ def analyze_instrument(instrument):
 
     df_h1.ta.ichimoku(append=True)
     
-    # @@@@@@ LA CORRECTION EST ICI @@@@@@
+    # @@@@@@ LA CORRECTION FINALE EST ICI @@@@@@
     df_h1.rename(columns={
         "ITS_9": "tenkan", 
         "IKS_26": "kijun",
-        "ISA_9_26": "senkou_a",  # Nom correct
-        "ISB_26_52": "senkou_b"  # Nom correct
+        "ISA_26": "senkou_a",  # Nom correct
+        "ISB_52": "senkou_b"   # Nom correct
     }, inplace=True)
     # @@@@@@ FIN DE LA CORRECTION @@@@@@
     
