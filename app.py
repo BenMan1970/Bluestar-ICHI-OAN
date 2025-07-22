@@ -9,14 +9,18 @@ import os
 st.set_page_config(layout="wide")
 
 INSTRUMENTS_TO_SCAN = [
-    # ... (la liste reste la même)
+    # Majeures
     "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
+    # Mineures (EUR)
     "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
+    # Mineures (GBP)
     "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
+    # Mineures (Autres)
     "AUD_JPY", "AUD_CAD", "AUD_CHF", "AUD_NZD",
     "CAD_JPY", "CAD_CHF",
     "CHF_JPY",
     "NZD_JPY", "NZD_CAD", "NZD_CHF",
+    # Or et Indices
     "XAU_USD", "US30_USD", "NAS100_USD", "SPX500_USD"
 ]
 
@@ -37,7 +41,6 @@ except Exception as e:
 # --- Fonctions ---
 @st.cache_data(ttl=300)
 def fetch_candles(instrument, timeframe, count=200):
-    # ... (cette fonction ne change pas)
     params = {"count": count, "granularity": timeframe}
     try:
         r = instruments.InstrumentsCandles(instrument=instrument, params=params)
@@ -58,14 +61,18 @@ def analyze_instrument(instrument):
     """Analyse un instrument avec les filtres Kumo H1 et la tendance de fond H4."""
     # --- 1. Analyse du Signal sur H1 ---
     df_h1 = fetch_candles(instrument, "H1")
-    if df_h1 is None or len(df_h1) < 52: return None # Il faut assez de données pour Ichimoku
+    if df_h1 is None or len(df_h1) < 52: return None
 
-    # Calcul et renommage de TOUS les composants Ichimoku
     df_h1.ta.ichimoku(append=True)
+    
+    # @@@@@@ LA CORRECTION EST ICI @@@@@@
     df_h1.rename(columns={
-        "ITS_9": "tenkan", "IKS_26": "kijun",
-        "ISA_26": "senkou_a", "ISB_52": "senkou_b"
+        "ITS_9": "tenkan", 
+        "IKS_26": "kijun",
+        "ISA_9_26": "senkou_a",  # Nom correct
+        "ISB_26_52": "senkou_b"  # Nom correct
     }, inplace=True)
+    # @@@@@@ FIN DE LA CORRECTION @@@@@@
     
     last_two_h1 = df_h1.iloc[-2:]
     if len(last_two_h1) < 2: return None
@@ -86,20 +93,17 @@ def analyze_instrument(instrument):
     
     kumo_status = "❌ Invalide"
     if signal_type_h1 == "Haussier":
-        # Conditions haussières
         is_price_above_kumo = last_h1['close'] > kumo_top
         is_kumo_bullish = last_h1['senkou_a'] > last_h1['senkou_b']
         if is_price_above_kumo and is_kumo_bullish:
             kumo_status = "🟢 Valide"
 
     elif signal_type_h1 == "Baissier":
-        # Conditions baissières
         is_price_below_kumo = last_h1['close'] < kumo_bottom
         is_kumo_bearish = last_h1['senkou_a'] < last_h1['senkou_b']
         if is_price_below_kumo and is_kumo_bearish:
             kumo_status = "🔴 Valide"
 
-    # Si le statut Kumo n'est pas valide, on arrête
     if "Valide" not in kumo_status:
         return None
 
