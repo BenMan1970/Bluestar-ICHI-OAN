@@ -65,12 +65,12 @@ def analyze_instrument(instrument):
 
     df_h1.ta.ichimoku(append=True)
     
-    # @@@@@@ LA CORRECTION FINALE EST ICI @@@@@@
+    # @@@@@@ CORRECTION DÉFINITIVE BASÉE SUR LES VRAIS NOMS DE COLONNES @@@@@@
     df_h1.rename(columns={
         "ITS_9": "tenkan", 
         "IKS_26": "kijun",
-        "ISA_26": "senkou_a",  # Nom correct
-        "ISB_52": "senkou_b"   # Nom correct
+        "ISA_9": "senkou_a",
+        "ISB_26": "senkou_b"
     }, inplace=True)
     # @@@@@@ FIN DE LA CORRECTION @@@@@@
     
@@ -88,6 +88,10 @@ def analyze_instrument(instrument):
         return None
 
     # --- 2. VALIDATION AVEC LE NUAGE (KUMO) H1 ---
+    # Gérer le cas où les valeurs sont NaN (Not a Number), ce qui arrive au début des données
+    if pd.isna(last_h1['senkou_a']) or pd.isna(last_h1['senkou_b']):
+        return None
+
     kumo_top = max(last_h1['senkou_a'], last_h1['senkou_b'])
     kumo_bottom = min(last_h1['senkou_a'], last_h1['senkou_b'])
     
