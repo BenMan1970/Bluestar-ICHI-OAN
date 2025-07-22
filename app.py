@@ -8,22 +8,10 @@ import os
 # --- Configuration et Constantes ---
 st.set_page_config(layout="wide")
 
-# ... (La liste des instruments et la connexion API ne changent pas)
 INSTRUMENTS_TO_SCAN = [
-    # Majeures
     "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
-    # Mineures (EUR)
-    "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
-    # Mineures (GBP)
-    "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
-    # Mineures (Autres)
-    "AUD_JPY", "AUD_CAD", "AUD_CHF", "AUD_NZD",
-    "CAD_JPY", "CAD_CHF",
-    "CHF_JPY",
-    "NZD_JPY", "NZD_CAD", "NZD_CHF",
-    # Or et Indices
-    "XAU_USD", "US30_USD", "NAS100_USD", "SPX500_USD"
-]
+    "EUR_JPY", "GBP_JPY", "XAU_USD", "US30_USD", "NAS100_USD", "SPX500_USD"
+] # Liste réduite pour des scans plus rapides
 
 # --- Connexion API (inchangée) ---
 try:
@@ -32,15 +20,14 @@ try:
 except KeyError:
     st.error("Erreur: Veuillez configurer les secrets OANDA.")
     st.stop()
-
 try:
     api = API(access_token=ACCESS_TOKEN, environment="practice")
 except Exception as e:
     st.error(f"Impossible de se connecter à l'API OANDA. Erreur: {e}")
     st.stop()
 
-# --- Fonctions (inchangées) ---
-@st.cache_data(ttl=300)
+# --- Fonctions ---
+@st.cache_data(ttl=60) # Cache de 1 minute
 def fetch_candles(instrument, timeframe, count=200):
     params = {"count": count, "granularity": timeframe}
     try:
@@ -49,8 +36,7 @@ def fetch_candles(instrument, timeframe, count=200):
         data = []
         for candle in r.response['candles']:
             time = pd.to_datetime(candle['time'])
-            o, h, l, c = (float(candle['mid']['o']), float(candle['mid']['h']),
-                          float(candle['mid']['l']), float(candle['mid']['c']))
+            o, h, l, c = (float(candle['mid']['o']), float(candle['mid']['h']), float(candle['mid']['l']), float(candle['mid']['c']))
             data.append([time, o, h, l, c])
         df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close'])
         df.set_index('time', inplace=True)
@@ -58,67 +44,89 @@ def fetch_candles(instrument, timeframe, count=200):
     except Exception:
         return None
 
-def analyze_instrument(instrument):
-    # La logique d'analyse reste exactement la même que la version précédente
-    df_h1 = fetch_candles(instrument, "H1")
-    if df_h1 is None or len(df_h1) < 52: return None
-    df_h1.ta.ichimoku(append=True)
-    df_h1.rename(columns={"ITS_9": "tenkan", "IKS_26": "kijun", "ISA_9": "senkou_a", "ISB_26": "senkou_b"}, inplace=True)
-    last_two_h1 = df_h1.iloc[-2:]
-    if len(last_two_h1) < 2 or pd.isna(last_two_h1.iloc[1]['senkou_a']): return None
-    previous_h1, last_h1 = last_two_h1.iloc[0], last_two_h1.iloc[1]
-    signal_type_h1 = None
-    if last_h1['tenkan'] > last_h1['kijun'] and previous_h1['tenkan'] <= previous_h1['kijun']: signal_type_h1 = "Haussier"
-    elif last_h1['tenkan'] < last_h1['kijun'] and previous_h1['tenkan'] >= previous_h1['kijun']: signal_type_h1 = "Baissier"
-    if not signal_type_h1: return None
-    kumo_top, kumo_bottom = max(last_h1['senkou_a'], last_h1['senkou_b']), min(last_h1['senkou_a'], last_h1['senkou_b'])
-    kumo_status = "❌ Invalide"
-    if signal_type_h1 == "Haussier" and last_h1['close'] > kumo_top and last_h1['senkou_a'] > last_h1['senkou_b']: kumo_status = "🟢 Valide"
-    elif signal_type_h1 == "Baissier" and last_h1['close'] < kumo_bottom and last_h1['senkou_a'] < last_h1['senkou_b']: kumo_status = "🔴 Valide"
-    if "Valide" not in kumo_status: return None
-    df_h4 = fetch_candles(instrument, "H4")
-    if df_h4 is None or len(df_h4) < 50: return None
-    df_h4['ema20'], df_h4['ema50'] = ta.ema(df_h4['close'], length=20), ta.ema(df_h4['close'], length=50)
-    last_h4 = df_h4.iloc[-1]
-    trend_h4 = "Neutre"
-    if last_h4['ema20'] > last_h4['ema50']: trend_h4 = "Haussier"
-    elif last_h4['ema20'] < last_h4['ema50']: trend_h4 = "Baissier"
-    if signal_type_h1 == trend_h4:
-        return {"Actif": instrument, "Signal H1": f"✅ {signal_type_h1}", "Statut Kumo H1": kumo_status, "Tendance H4": f"👍 {trend_h4}", "Heure Signal (UTC)": last_h1.name.strftime('%Y-%m-%d %H:%M'), "Dernier Prix": last_h1['close']}
+def get_ema_trend(df):
+    if df is None or len(df) < 50: return "Indisponible"
+    df['ema20'] = ta.ema(df['close'], length=20)
+    df['ema50'] = ta.ema(df['close'], length=50)
+    last = df.iloc[-1]
+    if pd.isna(last['ema20']) or pd.isna(last['ema50']): return "Indisponible"
+    if last['ema20'] > last['ema50']: return "Haussier"
+    return "Baissier"
+
+def analyze_kumo_breakout(instrument, main_tf, sub_tf1, sub_tf2):
+    """
+    Détecte un croisement du nuage sur la timeframe principale (main_tf)
+    et le valide avec les timeframes inférieures (sub_tf1, sub_tf2).
+    """
+    df = fetch_candles(instrument, main_tf)
+    if df is None or len(df) < 52: return None
+
+    df.ta.ichimoku(append=True)
+    df.rename(columns={"ITS_9": "tenkan", "IKS_26": "kijun", "ISA_9": "senkou_a", "ISB_26": "senkou_b"}, inplace=True)
+    
+    # On regarde les 3 dernières bougies pour un croisement récent
+    for i in range(2, 4):
+        last = df.iloc[-i]
+        previous = df.iloc[-i-1]
+
+        if pd.isna(last['senkou_a']) or pd.isna(previous['senkou_a']): continue
+
+        kumo_top_last, kumo_bottom_last = max(last['senkou_a'], last['senkou_b']), min(last['senkou_a'], last['senkou_b'])
+        kumo_top_prev, kumo_bottom_prev = max(previous['senkou_a'], previous['senkou_b']), min(previous['senkou_a'], previous['senkou_b'])
+
+        signal_type = None
+        # Croisement Haussier du Kumo : La Tenkan passe au-dessus du nuage
+        if last['tenkan'] > kumo_top_last and previous['tenkan'] < kumo_top_prev:
+            if last['senkou_a'] > last['senkou_b']: # Le nuage doit être haussier
+                signal_type = "Haussier"
+        # Croisement Baissier du Kumo : La Tenkan passe en-dessous du nuage
+        elif last['tenkan'] < kumo_bottom_last and previous['tenkan'] > kumo_bottom_prev:
+            if last['senkou_a'] < last['senkou_b']: # Le nuage doit être baissier
+                signal_type = "Baissier"
+        
+        if signal_type:
+            # --- Filtre de confirmation MTF ---
+            trend1 = get_ema_trend(fetch_candles(instrument, sub_tf1))
+            trend2 = get_ema_trend(fetch_candles(instrument, sub_tf2))
+
+            if signal_type == trend1 and signal_type == trend2:
+                return {
+                    "Actif": instrument,
+                    "Signal": f" breakout {signal_type}",
+                    f"Conf. {sub_tf1}": "✅",
+                    f"Conf. {sub_tf2}": "✅",
+                    "Heure Signal (UTC)": last.name.strftime('%Y-%m-%d %H:%M')
+                }
     return None
 
 # --- Interface Streamlit ---
-st.title("🚀 BlueStar - Scanner de Marché Ichimoku")
+st.title("🚀 BlueStar - Scanner de Breakout Ichimoku")
 
-# 1. Initialisation de l'état de session
-if 'scan_results' not in st.session_state:
-    st.session_state.scan_results = None
+if 'scan_results_h4' not in st.session_state: st.session_state.scan_results_h4 = None
+if 'scan_results_h1' not in st.session_state: st.session_state.scan_results_h1 = None
 
-# Création de colonnes pour les boutons
-col1, col2 = st.columns([1, 6]) # Crée deux colonnes, la première plus petite
+col1, col2 = st.columns(2)
 with col1:
-    if st.button("Lancer le Scan", type="primary"):
-        with st.spinner(f"Analyse en cours sur {len(INSTRUMENTS_TO_SCAN)} instruments..."):
-            all_signals = []
-            for instrument in INSTRUMENTS_TO_SCAN:
-                signal = analyze_instrument(instrument)
-                if signal:
-                    all_signals.append(signal)
-            
-            if not all_signals:
-                st.session_state.scan_results = pd.DataFrame() # DataFrame vide pour signifier "rien trouvé"
-            else:
-                # 2. Stockage des résultats dans l'état de session
-                st.session_state.scan_results = pd.DataFrame(all_signals)
+    if st.button("Lancer Scan H4", type="primary"):
+        with st.spinner("Analyse des signaux de fond H4..."):
+            signals = [analyze_kumo_breakout(inst, "H4", "H1", "M15") for inst in INSTRUMENTS_TO_SCAN]
+            st.session_state.scan_results_h4 = pd.DataFrame([s for s in signals if s])
 with col2:
-    if st.button("Effacer les résultats"):
-        st.session_state.scan_results = None
-        st.experimental_rerun() # Force le rafraîchissement de la page
+    if st.button("Lancer Scan H1", type="primary"):
+        with st.spinner("Analyse des signaux intraday H1..."):
+            signals = [analyze_kumo_breakout(inst, "H1", "M15", "M5") for inst in INSTRUMENTS_TO_SCAN]
+            st.session_state.scan_results_h1 = pd.DataFrame([s for s in signals if s])
 
-# 3. Affichage permanent des résultats (s'ils existent)
-if st.session_state.scan_results is not None:
-    st.subheader("Résultats du Dernier Scan")
-    if st.session_state.scan_results.empty:
-        st.info("Aucun signal de haute qualité n'a été trouvé lors du dernier scan.")
+st.subheader("Tableau des Signaux de Fond (H4)")
+if st.session_state.scan_results_h4 is not None:
+    if st.session_state.scan_results_h4.empty:
+        st.info("Aucun breakout H4 validé n'a été trouvé.")
     else:
-        st.dataframe(st.session_state.scan_results, use_container_width=True, hide_index=True)
+        st.dataframe(st.session_state.scan_results_h4, use_container_width=True, hide_index=True)
+
+st.subheader("Tableau des Signaux Intraday (H1)")
+if st.session_state.scan_results_h1 is not None:
+    if st.session_state.scan_results_h1.empty:
+        st.info("Aucun breakout H1 validé n'a été trouvé.")
+    else:
+        st.dataframe(st.session_state.scan_results_h1, use_container_width=True, hide_index=True)
