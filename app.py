@@ -5,115 +5,127 @@ from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 import os
 
-# --- Configuration des Secrets (Robuste pour Streamlit Cloud) ---
+# --- Configuration et Constantes ---
+st.set_page_config(layout="wide") # <-- Met la page en pleine largeur !
+
+# Liste des instruments à scanner (vous pouvez la personnaliser)
+INSTRUMENTS_TO_SCAN = [
+    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "NZD_USD",
+    "EUR_JPY", "GBP_JPY", "XAU_USD", "US30_USD", "NAS100_USD", "SPX500_USD"
+]
+TIMEFRAME = "H1" # Pour l'instant on se concentre sur une seule timeframe
+
+# --- Connexion API (inchangée) ---
 try:
     ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
     ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
 except KeyError:
-    st.error("Erreur: Veuillez configurer les secrets OANDA (OANDA_ACCESS_TOKEN, OANDA_ACCOUNT_ID) dans les paramètres de l'application.")
+    st.error("Erreur: Veuillez configurer les secrets OANDA.")
     st.stop()
 
-# Initialisation de l'API
 try:
-    api = API(access_token=ACCESS_TOKEN, environment="practice") # "practice" ou "live"
+    api = API(access_token=ACCESS_TOKEN, environment="practice")
 except Exception as e:
     st.error(f"Impossible de se connecter à l'API OANDA. Erreur: {e}")
     st.stop()
 
+# --- Fonctions (améliorées) ---
 
-# --- Fonctions ---
-
-@st.cache_data(ttl=300) # Cache les données pour 5 minutes
+@st.cache_data(ttl=300)
 def fetch_candles(instrument, timeframe, count):
-    """Récupère les données de chandeliers depuis OANDA."""
-    params = {
-        "count": count,
-        "granularity": timeframe
-    }
+    # ... (cette fonction ne change pas)
+    params = {"count": count, "granularity": timeframe}
     try:
         r = instruments.InstrumentsCandles(instrument=instrument, params=params)
         api.request(r)
-        
         data = []
         for candle in r.response['candles']:
             time = pd.to_datetime(candle['time'])
-            volume = candle['volume']
             o = float(candle['mid']['o'])
             h = float(candle['mid']['h'])
             l = float(candle['mid']['l'])
             c = float(candle['mid']['c'])
-            data.append([time, o, h, l, c, volume])
-
-        df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+            data.append([time, o, h, l, c])
+        df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close'])
         df.set_index('time', inplace=True)
         return df
-    except Exception as e:
-        st.error(f"Erreur lors de la récupération des données pour {instrument}: {e}")
+    except Exception:
         return None
 
-def add_ichimoku(df):
-    """Ajoute les indicateurs Ichimoku au DataFrame."""
-    if df is not None and not df.empty:
-        df.ta.ichimoku(append=True)
-    return df
+def analyze_instrument(instrument, timeframe):
+    """
+    Analyse un seul instrument et retourne un dictionnaire si un signal est trouvé.
+    Sinon, retourne None.
+    """
+    df = fetch_candles(instrument, timeframe, 150)
+    if df is None or df.empty:
+        return None
 
+    # Calcul et renommage Ichimoku
+    df.ta.ichimoku(append=True)
+    df.rename(columns={"ITS_9": "tenkan", "IKS_26": "kijun"}, inplace=True)
+
+    # Isoler les deux dernières bougies
+    last_two = df.iloc[-2:]
+    if len(last_two) < 2:
+        return None
+
+    previous = last_two.iloc[0]
+    last = last_two.iloc[1]
+
+    signal_type = None
+    # Croisement Haussier
+    if last['tenkan'] > last['kijun'] and previous['tenkan'] <= previous['kijun']:
+        signal_type = "✅ Haussier"
+    # Croisement Baissier
+    elif last['tenkan'] < last['kijun'] and previous['tenkan'] >= previous['kijun']:
+        signal_type = "❌ Baissier"
+
+    if signal_type:
+        # Si un signal est trouvé, on crée un dictionnaire de résultat
+        signal_info = {
+            "🌟 Signal": signal_type,
+            "Actif": instrument,
+            "Timeframe": timeframe,
+            "Heure du Signal (UTC)": last.name.strftime('%Y-%m-%d %H:%M'),
+            "Dernier Prix": last['close'],
+            "Tenkan": round(last['tenkan'], 5),
+            "Kijun": round(last['kijun'], 5)
+        }
+        return signal_info
+    
+    return None
 
 # --- Interface Streamlit ---
-st.title("Scanner de Marché Ichimoku")
-st.write("Analyse les croisements Tenkan/Kijun avec filtres sur H1 et H4.")
+st.title("🚀 BlueStar - Scanner de Marché Ichimoku")
 
-# Test sur un instrument pour commencer
-instrument_test = "EUR_USD"
-timeframe_test = "H1"
+if st.button("Lancer le Scan", type="primary"):
+    st.subheader(f"Analyse en cours sur {len(INSTRUMENTS_TO_SCAN)} instruments ({TIMEFRAME})...")
+    
+    progress_bar = st.progress(0, text="Initialisation...")
+    all_signals = []
 
-st.header(f"Analyse test pour {instrument_test} sur {timeframe_test}")
+    for i, instrument in enumerate(INSTRUMENTS_TO_SCAN):
+        # Mise à jour de la barre de progression
+        progress_text = f"Analyse de {instrument}..."
+        progress_bar.progress((i + 1) / len(INSTRUMENTS_TO_SCAN), text=progress_text)
 
-if st.button("Lancer le test"):
-    # Étape 1: Récupérer les données
-    df_candles = fetch_candles(instrument_test, timeframe_test, 150)
+        # Analyse de l'instrument
+        signal = analyze_instrument(instrument, TIMEFRAME)
+        if signal:
+            all_signals.append(signal)
 
-    if df_candles is not None and not df_candles.empty:
-        # Étape 2: Calculer Ichimoku
-        df_with_indicators = add_ichimoku(df_candles)
-        
-        st.success("Données récupérées et indicateurs calculés !")
-        st.dataframe(df_with_indicators.tail(5))
+    progress_bar.empty() # Fait disparaître la barre de progression
 
-        # --- ÉTAPE 3: DÉTECTION DU CROISEMENT ---
-
-        # 3.A - Renommer les colonnes pour la lisibilité
-        df_with_indicators.rename(columns={
-            "ITS_9": "tenkan",
-            "IKS_26": "kijun",
-            "ISA_26": "senkou_a",
-            "ISB_52": "senkou_b",
-            "ICS_26": "chikou"
-        }, inplace=True)
-
-        # 3.B - Isoler les deux dernières bougies
-        last_two_candles = df_with_indicators.iloc[-2:]
-        
-        if len(last_two_candles) < 2:
-            st.warning("Pas assez de données pour détecter un croisement.")
-        else:
-            previous_candle = last_two_candles.iloc[0]
-            last_candle = last_two_candles.iloc[1]
-
-            # 3.C - Logique de détection du croisement
-            st.subheader("Résultat de l'analyse du croisement :")
-
-            # Condition pour un croisement haussier
-            if last_candle['tenkan'] > last_candle['kijun'] and previous_candle['tenkan'] <= previous_candle['kijun']:
-                st.success(f"✅ Signal de croisement HAUSSIER détecté sur {instrument_test} !")
-                st.write(f"Heure du signal (UTC) : {last_candle.name}")
-
-            # Condition pour un croisement baissier
-            elif last_candle['tenkan'] < last_candle['kijun'] and previous_candle['tenkan'] >= previous_candle['kijun']:
-                st.error(f"❌ Signal de croisement BAISSIER détecté sur {instrument_test} !")
-                st.write(f"Heure du signal (UTC) : {last_candle.name}")
-
-            else:
-                st.info("Aucun croisement Tenkan/Kijun détecté sur la dernière bougie.")
+    st.subheader("Résultats du Scan")
+    if not all_signals:
+        st.info("Aucun nouveau signal de croisement Tenkan/Kijun détecté pour le moment.")
     else:
-        st.error("Impossible de récupérer les données pour l'analyse.")
+        # Affichage du tableau de résultats
+        results_df = pd.DataFrame(all_signals)
+        st.dataframe(
+            results_df,
+            use_container_width=True, # <-- Affiche le tableau en pleine largeur !
+            hide_index=True
+        )
        
