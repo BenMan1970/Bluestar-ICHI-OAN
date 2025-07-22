@@ -1,5 +1,5 @@
 streamlit==1.33.0
 pandas==2.2.1
-oandapyV20==0.7.3
+oandapyV20==0.7.2
 pandas-ta==0.3.14b0
 numpy<2.0
