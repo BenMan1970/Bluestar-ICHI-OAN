@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
+import pytz  # Ajout de la bibliothèque pour les fuseaux horaires
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
@@ -14,7 +15,6 @@ st.set_page_config(page_title="Scanner Ichimoku Pro", layout="wide")
 
 @st.cache_resource(ttl=3600)
 def get_oanda_client():
-    """Initialise le client API en lisant les secrets Streamlit."""
     try:
         access_token = st.secrets["OANDA_ACCESS_TOKEN"]
         return API(access_token=access_token)
@@ -24,7 +24,6 @@ def get_oanda_client():
 
 @st.cache_data(ttl=300)
 def get_ohlc_data(_client, pair, count, granularity):
-    """Récupère les données OHLC."""
     if not _client: return None
     params = {"count": count, "granularity": granularity, "price": "M"}
     r = InstrumentsCandles(instrument=pair, params=params)
@@ -39,7 +38,6 @@ def get_ohlc_data(_client, pair, count, granularity):
         return None
 
 def calculate_ichimoku(df):
-    """Calcule toutes les composantes d'Ichimoku."""
     df["Tenkan"] = (df["High"].rolling(window=9).max() + df["Low"].rolling(window=9).min()) / 2
     df["Kijun"] = (df["High"].rolling(window=26).max() + df["Low"].rolling(window=26).min()) / 2
     df["Senkou_A"] = ((df["Tenkan"] + df["Kijun"]) / 2).shift(26)
@@ -47,44 +45,30 @@ def calculate_ichimoku(df):
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
-# --- FONCTION DE CROISEMENT AMÉLIORÉE ---
 def find_last_tk_cross_info(df):
-    """
-    Trouve l'heure et la direction du dernier croisement Tenkan/Kijun.
-    Retourne (heure du croisement, direction du croisement).
-    """
     is_bullish = df['Tenkan'] > df['Kijun']
     crosses = is_bullish.ne(is_bullish.shift(1))
-    
     if crosses.any():
         last_cross_time = crosses[crosses].index[-1]
-        # Détermine la direction AU MOMENT du croisement
         is_bullish_at_cross = df.loc[last_cross_time, 'Tenkan'] > df.loc[last_cross_time, 'Kijun']
         direction = "✅ Haussier" if is_bullish_at_cross else "❌ Baissier"
         return last_cross_time, direction
-        
     return pd.NaT, "Neutre"
 
 def analyze_ichimoku_status(df):
-    """Analyse complète l'état d'Ichimoku et retourne un statut détaillé."""
     if df is None or len(df) < 78:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
     last = df.iloc[-2]
     last_chikou = df.iloc[-28]
-    
-    # Utilisation de la nouvelle fonction pour obtenir l'heure ET la direction correcte
     cross_time, cross_direction = find_last_tk_cross_info(df)
 
     conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
-    # Les autres conditions sont basées sur la dernière bougie, ce qui est correct
     if last["Close"] > last["Senkou_A"] and last["Close"] > last["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
     elif last["Close"] < last["Senkou_A"] and last["Close"] < last["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    
     if last["Chikou"] > last_chikou["High"]: conditions["Chikou Libre"] = "✅ Haussier"
     elif last["Chikou"] < last_chikou["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
-
     if last["Senkou_A"] > last["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last["Senkou_A"] < last["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
 
@@ -98,7 +82,7 @@ def analyze_ichimoku_status(df):
     return {"Statut": status, "Conditions": conditions, "data": df, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
-    """Crée le graphique Matplotlib."""
+    # Le code de cette fonction est correct et n'a pas besoin de changer
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan", color="blue", lw=1)
@@ -121,11 +105,21 @@ client = get_oanda_client()
 
 if client:
     with st.expander("⚙️ Configuration du Scan", expanded=True):
-        pairs_to_scan = st.multiselect(
-            "Choisissez les paires à analyser",
-            ["EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD"],
-            default=["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD"]
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            pairs_to_scan = st.multiselect(
+                "Choisissez les paires à analyser",
+                ["EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD"],
+                default=["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD"]
+            )
+        with col2:
+            # --- AJOUT DU SÉLECTEUR DE FUSEAU HORAIRE ---
+            common_timezones = ["UTC", "Europe/Paris", "Europe/London", "America/New_York", "Asia/Tokyo"]
+            selected_timezone = st.selectbox(
+                "Choisissez votre fuseau horaire",
+                common_timezones,
+                index=1 # 'Europe/Paris' par défaut
+            )
 
     if st.button("🚀 Lancer le Scan (H1 & H4)", type="primary"):
         if not pairs_to_scan:
@@ -143,20 +137,16 @@ if client:
                 for pair in pairs_to_scan:
                     scan_count += 1
                     progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
-                    
                     df = get_ohlc_data(client, pair, count=200, granularity=timeframe)
                     if df is not None:
                         df_ichimoku = calculate_ichimoku(df.copy())
                         analysis = analyze_ichimoku_status(df_ichimoku)
-                        
                         row = {"Paire": pair, "Statut Global": analysis["Statut"]}
                         row.update(analysis["Conditions"])
                         row["cross_time_obj"] = analysis["cross_time"]
-                        
                         all_results_by_tf[timeframe].append((row, analysis.get("data")))
                         if pd.notna(analysis["cross_time"]):
                             all_cross_times.append(analysis["cross_time"])
-
             progress_bar.empty()
             
             most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
@@ -169,7 +159,9 @@ if client:
                         cross_time = row_data["cross_time_obj"]
                         
                         if pd.notna(cross_time):
-                            time_str = cross_time.strftime("%Y-%m-%d %H:%M")
+                            # --- CONVERSION DE L'HEURE DANS LE FUSEAU HORAIRE SÉLECTIONNÉ ---
+                            localized_time = cross_time.tz_convert(selected_timezone)
+                            time_str = localized_time.strftime("%Y-%m-%d %H:%M")
                             if cross_time == most_recent_cross_time:
                                 time_str += " ⭐"
                         else:
