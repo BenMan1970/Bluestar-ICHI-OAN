@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
-import pytz  # Ajout de la bibliothèque pour les fuseaux horaires
+import pytz  # Bibliothèque pour les fuseaux horaires
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
@@ -82,7 +82,6 @@ def analyze_ichimoku_status(df):
     return {"Statut": status, "Conditions": conditions, "data": df, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
-    # Le code de cette fonction est correct et n'a pas besoin de changer
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan", color="blue", lw=1)
@@ -108,90 +107,4 @@ if client:
         col1, col2 = st.columns(2)
         with col1:
             pairs_to_scan = st.multiselect(
-                "Choisissez les paires à analyser",
-                ["EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD"],
-                default=["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD"]
-            )
-        with col2:
-            # --- AJOUT DU SÉLECTEUR DE FUSEAU HORAIRE ---
-            common_timezones = ["UTC", "Europe/Paris", "Europe/London", "America/New_York", "Asia/Tokyo"]
-            selected_timezone = st.selectbox(
-                "Choisissez votre fuseau horaire",
-                common_timezones,
-                index=1 # 'Europe/Paris' par défaut
-            )
-
-    if st.button("🚀 Lancer le Scan (H1 & H4)", type="primary"):
-        if not pairs_to_scan:
-            st.warning("Veuillez sélectionner au moins une paire.")
-        else:
-            timeframes_to_scan = ["H1", "H4"]
-            all_results_by_tf = {tf: [] for tf in timeframes_to_scan}
-            all_cross_times = []
-
-            progress_bar = st.progress(0, text="Lancement de l'analyse multi-temporelle...")
-            total_scans = len(pairs_to_scan) * len(timeframes_to_scan)
-            scan_count = 0
-
-            for timeframe in timeframes_to_scan:
-                for pair in pairs_to_scan:
-                    scan_count += 1
-                    progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
-                    df = get_ohlc_data(client, pair, count=200, granularity=timeframe)
-                    if df is not None:
-                        df_ichimoku = calculate_ichimoku(df.copy())
-                        analysis = analyze_ichimoku_status(df_ichimoku)
-                        row = {"Paire": pair, "Statut Global": analysis["Statut"]}
-                        row.update(analysis["Conditions"])
-                        row["cross_time_obj"] = analysis["cross_time"]
-                        all_results_by_tf[timeframe].append((row, analysis.get("data")))
-                        if pd.notna(analysis["cross_time"]):
-                            all_cross_times.append(analysis["cross_time"])
-            progress_bar.empty()
-            
-            most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
-
-            for timeframe, results in all_results_by_tf.items():
-                st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
-                if results:
-                    display_data = []
-                    for row_data, _ in results:
-                        cross_time = row_data["cross_time_obj"]
-                        
-                        if pd.notna(cross_time):
-                            # --- CONVERSION DE L'HEURE DANS LE FUSEAU HORAIRE SÉLECTIONNÉ ---
-                            localized_time = cross_time.tz_convert(selected_timezone)
-                            time_str = localized_time.strftime("%Y-%m-%d %H:%M")
-                            if cross_time == most_recent_cross_time:
-                                time_str += " ⭐"
-                        else:
-                            time_str = "N/A"
-                        
-                        row_data["Dernier Croisement TK"] = time_str
-                        del row_data["cross_time_obj"]
-                        display_data.append(row_data)
-
-                    results_df = pd.DataFrame(display_data).set_index("Paire")
-                    
-                    results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
-                    results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
-                    results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
-                    results_df = results_df.drop(columns=['sort_time', 'is_starred'])
-                    
-                    st.dataframe(results_df, use_container_width=True)
-
-                    strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
-                    if strong_signals:
-                        st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
-                        for result, data in strong_signals:
-                            if "FORT" in result["Statut Global"]:
-                                with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
-                                    fig = plot_ichimoku(data, result['Paire'], timeframe)
-                                    st.pyplot(fig)
-                                    plt.close(fig)
-                    else:
-                        st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
-                else:
-                    st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe}.")
-else:
-    st.error("L'application ne peut pas démarrer. Vérifiez vos secrets OANDA.")
+                "
