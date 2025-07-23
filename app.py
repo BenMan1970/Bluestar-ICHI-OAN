@@ -6,93 +6,93 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
 
-# Utiliser le backend "Agg" pour la compatibilité avec les serveurs sans interface graphique (Streamlit Cloud)
-matplotlib.use("Agg")
-
-# --- Configuration et Initialisation ---
+# Configuration de la page et du backend Matplotlib
+matplotlib.use("Agg")  # Indispensable pour Streamlit Cloud
 st.set_page_config(page_title="Scan Ichimoku", layout="wide")
-st.title("🔍 Scan Ichimoku sur Paires de Devises")
-st.markdown("Analyse des signaux Ichimoku forts sur plusieurs paires de devises via l'API OANDA.")
 
-# --- Fonctions ---
+# --- Fonctions de l'application ---
 
-@st.cache_data(ttl=600) # Mettre en cache les données pendant 10 minutes
+@st.cache_resource(ttl=3600) # Met en cache le client API pendant 1 heure
 def get_oanda_client():
-    """Initialise et retourne le client API OANDA."""
+    """Initialise et retourne le client API OANDA en lisant les secrets."""
     try:
+        # Structure recommandée pour les secrets Streamlit
         access_token = st.secrets["oanda"]["api_key"]
-        # L'environnement est 'practice' ou 'live'
-        environment = st.secrets["oanda"].get("environment", "practice")
-        client = API(access_token=access_token, environment=environment)
-        return client
-    except (KeyError, V20Error) as e:
-        st.error(f"Erreur d'authentification ou de configuration OANDA. Vérifiez vos secrets.toml. Détails: {e}")
+        environment = st.secrets["oanda"].get("environment", "practice") # 'practice' par défaut
+        return API(access_token=access_token, environment=environment)
+    except (KeyError, AttributeError):
+        st.error("Erreur de configuration des secrets OANDA. Assurez-vous que votre fichier secrets.toml contient une section [oanda] avec une 'api_key'.")
         return None
 
-@st.cache_data(ttl=600) # Mettre en cache les données pendant 10 minutes
-def get_ohlc(_client, pair, count=150, granularity="H1"):
-    """Récupère les données OHLC pour une paire donnée."""
+@st.cache_data(ttl=600) # Met en cache les données d'une paire pendant 10 minutes
+def get_ohlc_data(_client, pair, count=150, granularity="H1"):
+    """Récupère les données OHLC complètes pour une paire via l'API OANDA."""
     if not _client:
         return None
         
     params = {"count": count, "granularity": granularity, "price": "M"}
     r = InstrumentsCandles(instrument=pair, params=params)
+    
     try:
         _client.request(r)
-        data = []
-        for candle in r.response["candles"]:
-            if candle['complete']:
-                data.append({
-                    "Time": candle["time"],
-                    "Open": float(candle["mid"]["o"]),
-                    "High": float(candle["mid"]["h"]),
-                    "Low": float(candle["mid"]["l"]),
-                    "Close": float(candle["mid"]["c"])
-                })
+        data = [
+            {
+                "Time": candle["time"],
+                "Open": float(candle["mid"]["o"]),
+                "High": float(candle["mid"]["h"]),
+                "Low": float(candle["mid"]["l"]),
+                "Close": float(candle["mid"]["c"]),
+            }
+            for candle in r.response.get("candles", []) if candle.get("complete")
+        ]
+        
+        if not data:
+            return None
+
         df = pd.DataFrame(data)
         df["Time"] = pd.to_datetime(df["Time"])
         return df.set_index("Time")
     except V20Error as e:
-        st.warning(f"Impossible de récupérer les données pour {pair}. Erreur API: {e}")
+        st.warning(f"Impossible de récupérer les données pour {pair}. Erreur API : {e}")
         return None
 
 def calculate_ichimoku(df):
-    """Calcule les indicateurs Ichimoku."""
-    # Tenkan-sen (Ligne de Conversion)
+    """Calcule et ajoute les composantes Ichimoku à un DataFrame."""
     df["Tenkan"] = (df["High"].rolling(window=9).max() + df["Low"].rolling(window=9).min()) / 2
-    # Kijun-sen (Ligne de Base)
     df["Kijun"] = (df["High"].rolling(window=26).max() + df["Low"].rolling(window=26).min()) / 2
-    # Senkou Span A (Portée Principale A)
     df["Senkou_A"] = ((df["Tenkan"] + df["Kijun"]) / 2).shift(26)
-    # Senkou Span B (Portée Principale B)
     df["Senkou_B"] = ((df["High"].rolling(window=52).max() + df["Low"].rolling(window=52).min()) / 2).shift(26)
-    # Chikou Span (Portée Décalée)
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
 def check_strong_buy_signal(df):
     """Vérifie un signal d'achat Ichimoku fort sur la dernière bougie clôturée."""
-    if len(df) < 80: # Assez de données pour que tous les indicateurs soient calculés
+    if len(df) < 78:  # Nécessaire pour le calcul de Chikou (52 + 26)
         return False
 
-    last = df.iloc[-2] # On utilise l'avant-dernière ligne (dernière bougie clôturée)
+    # Analyse sur la dernière bougie clôturée (avant-dernière ligne)
+    last_candle = df.iloc[-2]
+    
+    # Prix de référence pour la Chikou Span (il y a 26 périodes)
+    chikou_price_ref = df['Close'].iloc[-28]
     
     # Conditions pour un signal d'achat fort
-    is_tenkan_above_kijun = last["Tenkan"] > last["Kijun"]
-    is_price_above_kumo = last["Close"] > last["Senkou_A"] and last["Close"] > last["Senkou_B"]
-    is_chikou_above_price = df['Chikou'].iloc[-28] > df['Close'].iloc[-28] # Chikou comparé au prix d'il y a 26 périodes
-    is_kumo_bullish = last["Senkou_A"] > last["Senkou_B"]
+    is_tenkan_above_kijun = last_candle["Tenkan"] > last_candle["Kijun"]
+    is_price_above_kumo = last_candle["Close"] > last_candle["Senkou_A"] and last_candle["Close"] > last_candle["Senkou_B"]
+    is_chikou_above_price = last_candle['Chikou'] > chikou_price_ref
+    is_kumo_bullish = last_candle["Senkou_A"] > last_candle["Senkou_B"]
     
+    # Toutes les conditions doivent être réunies
     return all([is_tenkan_above_kijun, is_price_above_kumo, is_chikou_above_price, is_kumo_bullish])
 
 def plot_ichimoku(df, pair):
-    """Crée un graphique Matplotlib pour Ichimoku."""
+    """Crée un graphique Matplotlib pour l'indicateur Ichimoku."""
     fig, ax = plt.subplots(figsize=(12, 7))
     
     ax.plot(df.index, df["Close"], label="Prix de Clôture", color="black", linewidth=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan-sen", color="blue", linewidth=1)
     ax.plot(df.index, df["Kijun"], label="Kijun-sen", color="red", linewidth=1)
-    ax.plot(df.index, df["Chikou"], label="Chikou Span", color="purple", linewidth=1, linestyle='--')
+    ax.plot(df.index, df["Chikou"], label="Chikou Span", color="purple", linewidth=1.2, linestyle='--')
     
     ax.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], 
                     where=df["Senkou_A"] >= df["Senkou_B"], color='lightgreen', alpha=0.4, label="Kumo haussier")
@@ -104,55 +104,53 @@ def plot_ichimoku(df, pair):
     ax.legend()
     ax.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
-    
     return fig
 
-# --- Interface Principale ---
+# --- Interface Principale Streamlit ---
+
+st.title("🔍 Scan de Signaux Ichimoku Forts")
+st.markdown("Cette application analyse plusieurs paires de devises pour détecter des signaux d'achat Ichimoku robustes en temps quasi réel.")
 
 client = get_oanda_client()
 
 if client:
-    pairs = [
+    pairs_to_scan = [
         "EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", 
         "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD" # Or
     ]
     
-    strong_signals = []
+    strong_signal_pairs = []
     
-    with st.spinner("Analyse des paires en cours... Veuillez patienter."):
-        for pair in pairs:
-            df = get_ohlc(client, pair)
+    with st.spinner(f"Analyse de {len(pairs_to_scan)} paires en cours..."):
+        for pair in pairs_to_scan:
+            df = get_ohlc_data(client, pair)
             if df is not None and not df.empty:
-                df_ichimoku = calculate_ichimoku(df)
+                df_ichimoku = calculate_ichimoku(df.copy())
                 if check_strong_buy_signal(df_ichimoku):
-                    strong_signals.append((pair, df_ichimoku))
+                    strong_signal_pairs.append((pair, df_ichimoku))
 
-    if strong_signals:
-        st.subheader(f"📈 {len(strong_signals)} Paire(s) avec Signal d'Achat Ichimoku Fort Détecté")
+    if strong_signal_pairs:
+        st.success(f"**{len(strong_signal_pairs)} paire(s) avec un signal d'achat fort détecté !**")
         
-        results_df = pd.DataFrame([pair for pair, _ in strong_signals], columns=["Paires avec signal"])
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            st.dataframe(results_df)
-            st.download_button(
-                label="📥 Télécharger la liste en CSV",
-                data=results_df.to_csv(index=False).encode('utf-8'),
-                file_name='signaux_ichimoku.csv',
-                mime='text/csv',
-            )
-        with col2:
-            st.info("Les graphiques ci-dessous montrent les détails pour chaque paire détectée.")
+        results_df = pd.DataFrame([pair for pair, _ in strong_signal_pairs], columns=["Paires avec signal"])
+        st.dataframe(results_df)
 
+        st.download_button(
+            label="📥 Télécharger la liste en CSV",
+            data=results_df.to_csv(index=False).encode('utf-8'),
+            file_name='signaux_ichimoku.csv',
+            mime='text/csv',
+        )
         st.divider()
 
-        for pair, df in strong_signals:
-            st.markdown(f"### Analyse détaillée pour : {pair}")
-            fig = plot_ichimoku(df, pair)
-            st.pyplot(fig)
-            plt.close(fig) # Important pour libérer la mémoire
+        for pair, df in strong_signal_pairs:
+            with st.expander(f"Voir le graphique pour {pair}", expanded=True):
+                fig = plot_ichimoku(df, pair)
+                st.pyplot(fig)
+                plt.close(fig) # Libère la mémoire après l'affichage
 
     else:
-        st.success("✅ Aucun signal d'achat fort détecté pour le moment parmi les paires analysées.")
+        st.info("Aucun signal d'achat fort détecté pour le moment parmi les paires analysées.")
+
 else:
-    st.warning("L'application ne peut pas démarrer sans une connexion valide à l'API OANDA.")
+    st.warning("L'application n'a pas pu démarrer. Veuillez vérifier la configuration de vos secrets OANDA.")
