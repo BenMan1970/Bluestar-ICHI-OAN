@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -7,7 +6,14 @@ import plotly.graph_objects as go
 st.set_page_config(layout="wide")
 st.title("Scanner Ichimoku - Croisement Tenkan / Kijun")
 
-symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'EURGBP', 'EURJPY', 'EURCHF', 'EURCAD', 'EURAUD', 'EURNZD', 'GBPJPY', 'GBPCHF', 'GBPCAD', 'GBPAUD', 'GBPNZD', 'CHFJPY', 'CADJPY', 'AUDJPY', 'NZDJPY', 'AUDCAD', 'AUDCHF', 'AUDNZD', 'CADCHF', 'NZDCAD', 'NZDCHF']
+symbols = [
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+    "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
+    "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
+    "CHFJPY", "CADJPY", "AUDJPY", "NZDJPY",
+    "AUDCAD", "AUDCHF", "AUDNZD",
+    "CADCHF", "NZDCAD", "NZDCHF"
+]
 
 @st.cache_data
 def fetch_data(symbol):
