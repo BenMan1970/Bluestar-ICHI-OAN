@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
-import pytz  # Bibliothèque pour les fuseaux horaires
+import pytz
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
@@ -28,8 +28,9 @@ def get_ohlc_data(_client, pair, count, granularity):
     params = {"count": count, "granularity": granularity, "price": "M"}
     r = InstrumentsCandles(instrument=pair, params=params)
     try:
-        _client.request(r)
-        data = [{"Time": c["time"], "Open": float(c["mid"]["o"]), "High": float(c["mid"]["h"]), "Low": float(c["mid"]["l"]), "Close": float(c["mid"]["c"])} for c in r.response.get("candles", []) if c.get("complete")]
+        # On inclut la dernière bougie même si elle est incomplète pour l'heure du croisement
+        response = _client.request(r)
+        data = [{"Time": c["time"], "Open": float(c["mid"]["o"]), "High": float(c["mid"]["h"]), "Low": float(c["mid"]["l"]), "Close": float(c["mid"]["c"])} for c in response.get("candles", [])]
         if not data: return None
         df = pd.DataFrame(data)
         df["Time"] = pd.to_datetime(df["Time"])
@@ -52,25 +53,36 @@ def find_last_tk_cross_info(df):
         last_cross_time = crosses[crosses].index[-1]
         is_bullish_at_cross = df.loc[last_cross_time, 'Tenkan'] > df.loc[last_cross_time, 'Kijun']
         direction = "✅ Haussier" if is_bullish_at_cross else "❌ Baissier"
-        return last_cross_time, direction
-    return pd.NaT, "Neutre"
+        return last_cross_time
+    return pd.NaT
 
+# --- LOGIQUE D'ANALYSE FIABILISÉE ---
 def analyze_ichimoku_status(df):
-    if df is None or len(df) < 78:
+    if df is None or len(df) < 79: # +1 pour s'assurer qu'on a bien une bougie à iloc[-2]
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    last = df.iloc[-2]
-    last_chikou = df.iloc[-28]
-    cross_time, cross_direction = find_last_tk_cross_info(df)
+    # On base toutes les conditions sur la dernière bougie CLÔTURÉE
+    last_closed = df.iloc[-2]
+    chikou_ref_closed = df.iloc[-28] # Référence pour la Chikou
 
-    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
+    # L'heure du dernier croisement peut venir de la bougie en cours, c'est OK
+    cross_time = find_last_tk_cross_info(df)
+
+    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": "Neutre", "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
-    if last["Close"] > last["Senkou_A"] and last["Close"] > last["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
-    elif last["Close"] < last["Senkou_A"] and last["Close"] < last["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    if last["Chikou"] > last_chikou["High"]: conditions["Chikou Libre"] = "✅ Haussier"
-    elif last["Chikou"] < last_chikou["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
-    if last["Senkou_A"] > last["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
-    elif last["Senkou_A"] < last["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
+    # --- Analyse basée sur la bougie CLÔTURÉE (last_closed) ---
+    if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
+    elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
+    
+    if last_closed["Tenkan"] > last_closed["Kijun"]: conditions["Croisement TK"] = "✅ Haussier"
+    elif last_closed["Tenkan"] < last_closed["Kijun"]: conditions["Croisement TK"] = "❌ Baissier"
+    
+    if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
+    elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
+
+    if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
+    elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
+    # --- Fin de l'analyse sur bougie clôturée ---
 
     is_buy = all(c.startswith("✅") for c in conditions.values())
     is_sell = all(c.startswith("❌") for c in conditions.values())
@@ -82,6 +94,7 @@ def analyze_ichimoku_status(df):
     return {"Statut": status, "Conditions": conditions, "data": df, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
+    # Identique à avant
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan", color="blue", lw=1)
@@ -112,9 +125,8 @@ if client:
                 default=["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD"]
             )
         with col2:
-            # --- MISE À JOUR DU SÉLECTEUR DE FUSEAU HORAIRE ---
             timezone_options = {
-                "GMT+1": "Etc/GMT-1", # Votre fuseau horaire
+                "GMT+1": "Etc/GMT-1",
                 "Paris / Berlin (GMT+2)": "Europe/Paris",
                 "Londres (GMT+1 / BST)": "Europe/London",
                 "New York (GMT-4 / EDT)": "America/New_York",
@@ -122,18 +134,18 @@ if client:
                 "UTC (Temps Universel)": "UTC"
             }
             friendly_names = list(timezone_options.keys())
-            default_index = friendly_names.index("GMT+1") # Définit GMT+1 par défaut
+            default_index = friendly_names.index("GMT+1")
 
             selected_friendly_name = st.selectbox(
                 "Choisissez votre fuseau horaire",
                 options=friendly_names,
-                index=default_index, # Mise par défaut
+                index=default_index,
                 help="Les heures des croisements seront affichées dans ce fuseau horaire."
             )
-            # Récupère le nom technique pour la conversion
             selected_timezone = timezone_options[selected_friendly_name]
 
     if st.button("🚀 Lancer le Scan (H1 & H4)", type="primary"):
+        # Le reste du code est identique et correct
         if not pairs_to_scan:
             st.warning("Veuillez sélectionner au moins une paire.")
         else:
@@ -149,16 +161,20 @@ if client:
                 for pair in pairs_to_scan:
                     scan_count += 1
                     progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
+                    
                     df = get_ohlc_data(client, pair, count=200, granularity=timeframe)
                     if df is not None:
                         df_ichimoku = calculate_ichimoku(df.copy())
                         analysis = analyze_ichimoku_status(df_ichimoku)
+                        
                         row = {"Paire": pair, "Statut Global": analysis["Statut"]}
                         row.update(analysis["Conditions"])
                         row["cross_time_obj"] = analysis["cross_time"]
+                        
                         all_results_by_tf[timeframe].append((row, analysis.get("data")))
                         if pd.notna(analysis["cross_time"]):
                             all_cross_times.append(analysis["cross_time"])
+
             progress_bar.empty()
             
             most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
