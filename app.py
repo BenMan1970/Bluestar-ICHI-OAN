@@ -129,7 +129,20 @@ if client:
                     # Métaux précieux
                     "XAU_USD"
                 ],
-                default=["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD"]
+                default=[
+                    # Paires majeures
+                    "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
+                    # Paires croisées EUR
+                    "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
+                    # Paires croisées GBP
+                    "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
+                    # Paires croisées JPY
+                    "CHF_JPY", "CAD_JPY", "AUD_JPY", "NZD_JPY",
+                    # Autres paires croisées
+                    "AUD_CAD", "AUD_CHF", "AUD_NZD", "CAD_CHF", "NZD_CAD", "NZD_CHF",
+                    # Métaux précieux
+                    "XAU_USD"
+                ]
             )
         with col2:
             timezone_options = {
