@@ -58,7 +58,7 @@ def find_last_tk_cross_info(df):
     if last_bullish and (not last_bearish or last_bullish > last_bearish):
         return last_bullish, "✅ Haussier"
     elif last_bearish and (not last_bullish or last_bearish > last_bullish):
-        return last_bearish, "❌ Baissier"
+        return last_bearish, "🔴 Baissier"
     else:
         return pd.NaT, "Neutre"
 
@@ -73,14 +73,14 @@ def analyze_ichimoku_status(df_full):
     conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
-    elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
+    elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "🔴 Baissier"
     if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
-    elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
+    elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "🔴 Baissier"
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
-    elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
+    elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "🔴 Baissier"
 
     is_buy = all(c.startswith("✅") for c in conditions.values())
-    is_sell = all(c.startswith("❌") for c in conditions.values())
+    is_sell = all(c.startswith("🔴") for c in conditions.values())
     
     status = "🟡 Neutre"
     if is_buy: status = "🟢 ACHAT FORT"
