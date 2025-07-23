@@ -28,7 +28,6 @@ def get_ohlc_data(_client, pair, count, granularity):
     params = {"count": count, "granularity": granularity, "price": "M"}
     r = InstrumentsCandles(instrument=pair, params=params)
     try:
-        # On inclut la dernière bougie même si elle est incomplète pour l'heure du croisement
         response = _client.request(r)
         data = [{"Time": c["time"], "Open": float(c["mid"]["o"]), "High": float(c["mid"]["h"]), "Low": float(c["mid"]["l"]), "Close": float(c["mid"]["c"])} for c in response.get("candles", [])]
         if not data: return None
@@ -46,44 +45,54 @@ def calculate_ichimoku(df):
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
+# --- FONCTION DE CROISEMENT UNIFIÉE ---
 def find_last_tk_cross_info(df):
+    """
+    Trouve l'heure et la direction du dernier croisement Tenkan/Kijun.
+    Retourne (heure du croisement, direction du croisement).
+    """
     is_bullish = df['Tenkan'] > df['Kijun']
+    # Détecte les points où l'état change par rapport à la bougie précédente
     crosses = is_bullish.ne(is_bullish.shift(1))
+    
+    # Ignore le premier point qui n'a pas de précédent
+    if len(crosses) > 0:
+        crosses.iloc[0] = False
+    
     if crosses.any():
         last_cross_time = crosses[crosses].index[-1]
+        # Détermine la direction AU MOMENT du croisement
         is_bullish_at_cross = df.loc[last_cross_time, 'Tenkan'] > df.loc[last_cross_time, 'Kijun']
         direction = "✅ Haussier" if is_bullish_at_cross else "❌ Baissier"
-        return last_cross_time
-    return pd.NaT
+        return last_cross_time, direction
+        
+    return pd.NaT, "Neutre"
 
-# --- LOGIQUE D'ANALYSE FIABILISÉE ---
 def analyze_ichimoku_status(df):
-    if df is None or len(df) < 79: # +1 pour s'assurer qu'on a bien une bougie à iloc[-2]
+    if df is None or len(df) < 79:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    # On base toutes les conditions sur la dernière bougie CLÔTURÉE
+    # Utilisation de la nouvelle fonction unifiée pour le croisement
+    cross_time, cross_direction = find_last_tk_cross_info(df)
+
+    # Les autres conditions sont basées sur la dernière bougie CLÔTURÉE
     last_closed = df.iloc[-2]
-    chikou_ref_closed = df.iloc[-28] # Référence pour la Chikou
+    chikou_ref_closed = df.iloc[-28]
 
-    # L'heure du dernier croisement peut venir de la bougie en cours, c'est OK
-    cross_time = find_last_tk_cross_info(df)
-
-    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": "Neutre", "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
+    # Le statut du croisement vient directement de la fonction unifiée
+    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
-    # --- Analyse basée sur la bougie CLÔTURÉE (last_closed) ---
+    # Analyse des autres conditions sur la bougie clôturée
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    
-    if last_closed["Tenkan"] > last_closed["Kijun"]: conditions["Croisement TK"] = "✅ Haussier"
-    elif last_closed["Tenkan"] < last_closed["Kijun"]: conditions["Croisement TK"] = "❌ Baissier"
     
     if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
     elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
 
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
-    # --- Fin de l'analyse sur bougie clôturée ---
 
+    # Statut global
     is_buy = all(c.startswith("✅") for c in conditions.values())
     is_sell = all(c.startswith("❌") for c in conditions.values())
     
