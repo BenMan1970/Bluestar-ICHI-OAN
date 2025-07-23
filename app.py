@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 import pytz
-import numpy as np  # NumPy est essentiel pour la nouvelle logique
+import numpy as np
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
@@ -30,7 +30,6 @@ def get_ohlc_data(_client, pair, count, granularity):
     r = InstrumentsCandles(instrument=pair, params=params)
     try:
         response = _client.request(r)
-        # On récupère toutes les bougies, y compris celle en cours
         data = [{"Time": c["time"], "Open": float(c["mid"]["o"]), "High": float(c["mid"]["h"]), "Low": float(c["mid"]["l"]), "Close": float(c["mid"]["c"])} for c in response.get("candles", [])]
         if not data: return None
         df = pd.DataFrame(data)
@@ -40,7 +39,6 @@ def get_ohlc_data(_client, pair, count, granularity):
         return None
 
 def calculate_ichimoku(df):
-    """Calcule les composantes Ichimoku. Cette fonction est correcte et correspond au Pine Script."""
     df["Tenkan"] = (df["High"].rolling(window=9).max() + df["Low"].rolling(window=9).min()) / 2
     df["Kijun"] = (df["High"].rolling(window=26).max() + df["Low"].rolling(window=26).min()) / 2
     df["Senkou_A"] = ((df["Tenkan"] + df["Kijun"]) / 2).shift(26)
@@ -51,26 +49,19 @@ def calculate_ichimoku(df):
 # --- FONCTION DE DÉTECTION DE CROISEMENT DÉFINITIVE ---
 def find_last_tk_cross_info(df):
     """
-    Détecte le dernier croisement Tenkan/Kijun sur un jeu de données STABLE.
+    Détecte le dernier croisement Tenkan/Kijun sur le jeu de données COMPLET.
     Retourne (heure, direction).
     """
-    # Crée un signal basé sur la position relative de Tenkan vs Kijun
     signal = np.sign(df['Tenkan'] - df['Kijun'])
-    
-    # Un croisement se produit lorsque le signal change (ex: de -1 à 1 ou de 1 à -1)
-    # On utilise diff() pour trouver ces changements
     crossovers = signal.diff()
     
-    # Trouver le dernier événement de croisement non nul
     last_cross_event = crossovers[crossovers != 0]
     
     if not last_cross_event.empty:
         last_cross_time = last_cross_event.index[-1]
         
-        # Si la valeur est positive, c'est un croisement haussier (ex: -1 à 1 -> diff = 2)
         if last_cross_event.iloc[-1] > 0:
             direction = "✅ Haussier"
-        # Si la valeur est négative, c'est un croisement baissier (ex: 1 à -1 -> diff = -2)
         else:
             direction = "❌ Baissier"
             
@@ -78,29 +69,33 @@ def find_last_tk_cross_info(df):
         
     return pd.NaT, "Neutre"
 
-def analyze_ichimoku_status(df):
-    """Analyse l'état d'Ichimoku sur des données STABLES (bougies clôturées)."""
-    # Le DataFrame passé ici ne contient que des bougies clôturées
-    if df is None or len(df) < 78:
+def analyze_ichimoku_status(df_full):
+    """
+    Analyse l'état d'Ichimoku avec une logique hybride :
+    - Croisement TK : sur les données complètes (temps réel).
+    - Autres conditions : sur la dernière bougie clôturée (stabilité).
+    """
+    if df_full is None or len(df_full) < 79:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    # L'analyse se fait sur la dernière ligne du df, qui est la dernière bougie clôturée
-    last_candle = df.iloc[-1]
-    chikou_ref = df.iloc[-27] # Référence Chikou pour la dernière bougie
+    # 1. Analyse du croisement sur le jeu de données complet (temps réel)
+    cross_time, cross_direction = find_last_tk_cross_info(df_full)
+    
+    # 2. Analyse des autres conditions sur la dernière bougie CLÔTURÉE
+    last_closed = df_full.iloc[-2]
+    chikou_ref_closed = df_full.iloc[-28]
 
-    # Le croisement est aussi détecté sur les données stables
-    cross_time, cross_direction = find_last_tk_cross_info(df)
-
+    # Le statut du croisement est déjà déterminé et correct
     conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
-    if last_candle["Close"] > last_candle["Senkou_A"] and last_candle["Close"] > last_candle["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
-    elif last_candle["Close"] < last_candle["Senkou_A"] and last_candle["Close"] < last_candle["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
+    if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
+    elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
     
-    if last_candle["Chikou"] > chikou_ref["High"]: conditions["Chikou Libre"] = "✅ Haussier"
-    elif last_candle["Chikou"] < chikou_ref["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
+    if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
+    elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
 
-    if last_candle["Senkou_A"] > last_candle["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
-    elif last_candle["Senkou_A"] < last_candle["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
+    if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
+    elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
 
     is_buy = all(c.startswith("✅") for c in conditions.values())
     is_sell = all(c.startswith("❌") for c in conditions.values())
@@ -109,7 +104,7 @@ def analyze_ichimoku_status(df):
     if is_buy: status = "🟢 ACHAT FORT"
     elif is_sell: status = "🔴 VENTE FORTE"
         
-    return {"Statut": status, "Conditions": conditions, "data": df, "cross_time": cross_time}
+    return {"Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
 
 
 def plot_ichimoku(df, pair, granularity):
@@ -180,12 +175,11 @@ if client:
                     scan_count += 1
                     progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
                     
-                    df_raw = get_ohlc_data(client, pair, count=200, granularity=timeframe)
-                    if df_raw is not None and len(df_raw) > 1:
-                        # --- MODIFICATION CRUCIALE : ON NE GARDE QUE LES BOUGIES CLÔTURÉES ---
-                        df_closed = df_raw.iloc[:-1].copy()
+                    df_full = get_ohlc_data(client, pair, count=200, granularity=timeframe)
+                    if df_full is not None and len(df_full) > 1:
+                        df_ichimoku = calculate_ichimoku(df_full.copy())
                         
-                        df_ichimoku = calculate_ichimoku(df_closed)
+                        # --- MODIFICATION CRUCIALE : On passe le DF complet à l'analyse ---
                         analysis = analyze_ichimoku_status(df_ichimoku)
                         
                         row = {"Paire": pair, "Statut Global": analysis["Statut"]}
