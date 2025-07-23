@@ -7,3 +7,4 @@ fpdf
 Pillow
 kaleido
 numpy
+oandapyV20
