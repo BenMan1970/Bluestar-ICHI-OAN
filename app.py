@@ -47,14 +47,23 @@ def calculate_ichimoku(df):
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
-def find_last_tk_cross(df):
-    """Trouve la date du dernier croisement Tenkan/Kijun."""
+# --- FONCTION DE CROISEMENT AMÉLIORÉE ---
+def find_last_tk_cross_info(df):
+    """
+    Trouve l'heure et la direction du dernier croisement Tenkan/Kijun.
+    Retourne (heure du croisement, direction du croisement).
+    """
     is_bullish = df['Tenkan'] > df['Kijun']
-    # Un croisement se produit lorsque l'état change par rapport à la bougie précédente
     crosses = is_bullish.ne(is_bullish.shift(1))
+    
     if crosses.any():
-        return crosses[crosses].index[-1]
-    return pd.NaT # Retourne "Not a Time" si aucun croisement n'est trouvé
+        last_cross_time = crosses[crosses].index[-1]
+        # Détermine la direction AU MOMENT du croisement
+        is_bullish_at_cross = df.loc[last_cross_time, 'Tenkan'] > df.loc[last_cross_time, 'Kijun']
+        direction = "✅ Haussier" if is_bullish_at_cross else "❌ Baissier"
+        return last_cross_time, direction
+        
+    return pd.NaT, "Neutre"
 
 def analyze_ichimoku_status(df):
     """Analyse complète l'état d'Ichimoku et retourne un statut détaillé."""
@@ -63,15 +72,15 @@ def analyze_ichimoku_status(df):
 
     last = df.iloc[-2]
     last_chikou = df.iloc[-28]
-    cross_time = find_last_tk_cross(df)
-
-    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": "Neutre", "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
+    # Utilisation de la nouvelle fonction pour obtenir l'heure ET la direction correcte
+    cross_time, cross_direction = find_last_tk_cross_info(df)
+
+    conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
+    
+    # Les autres conditions sont basées sur la dernière bougie, ce qui est correct
     if last["Close"] > last["Senkou_A"] and last["Close"] > last["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
     elif last["Close"] < last["Senkou_A"] and last["Close"] < last["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    
-    if last["Tenkan"] > last["Kijun"]: conditions["Croisement TK"] = "✅ Haussier"
-    elif last["Tenkan"] < last["Kijun"]: conditions["Croisement TK"] = "❌ Baissier"
     
     if last["Chikou"] > last_chikou["High"]: conditions["Chikou Libre"] = "✅ Haussier"
     elif last["Chikou"] < last_chikou["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
@@ -92,7 +101,9 @@ def plot_ichimoku(df, pair, granularity):
     """Crée le graphique Matplotlib."""
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
-    # ... (code de tracé identique, pas besoin de le répéter ici)
+    ax.plot(df.index, df["Tenkan"], label="Tenkan", color="blue", lw=1)
+    ax.plot(df.index, df["Kijun"], label="Kijun", color="red", lw=1)
+    ax.plot(df.index, df["Chikou"], label="Chikou", color="purple", lw=1.2, ls='--')
     ax.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=df["Senkou_A"] >= df["Senkou_B"], color='lightgreen', alpha=0.4, label="Kumo Haussier")
     ax.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=df["Senkou_A"] < df["Senkou_B"], color='lightcoral', alpha=0.4, label="Kumo Baissier")
     ax.set_title(f"Ichimoku pour {pair} ({granularity})", fontsize=16)
@@ -133,14 +144,14 @@ if client:
                     scan_count += 1
                     progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
                     
-                    df = get_ohlc_data(client, pair, count=200, granularity=timeframe) # 200 pour avoir assez de données pour le croisement
+                    df = get_ohlc_data(client, pair, count=200, granularity=timeframe)
                     if df is not None:
                         df_ichimoku = calculate_ichimoku(df.copy())
                         analysis = analyze_ichimoku_status(df_ichimoku)
                         
                         row = {"Paire": pair, "Statut Global": analysis["Statut"]}
                         row.update(analysis["Conditions"])
-                        row["cross_time_obj"] = analysis["cross_time"] # Pour la comparaison
+                        row["cross_time_obj"] = analysis["cross_time"]
                         
                         all_results_by_tf[timeframe].append((row, analysis.get("data")))
                         if pd.notna(analysis["cross_time"]):
@@ -153,35 +164,39 @@ if client:
             for timeframe, results in all_results_by_tf.items():
                 st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
                 if results:
-                    # Préparation des données pour l'affichage
                     display_data = []
                     for row_data, _ in results:
                         cross_time = row_data["cross_time_obj"]
                         
-                        # Formatage de l'heure du croisement
                         if pd.notna(cross_time):
                             time_str = cross_time.strftime("%Y-%m-%d %H:%M")
                             if cross_time == most_recent_cross_time:
-                                time_str += " ⭐" # Ajout de l'étoile
+                                time_str += " ⭐"
                         else:
                             time_str = "N/A"
                         
                         row_data["Dernier Croisement TK"] = time_str
-                        del row_data["cross_time_obj"] # Nettoyage avant affichage
+                        del row_data["cross_time_obj"]
                         display_data.append(row_data)
 
                     results_df = pd.DataFrame(display_data).set_index("Paire")
+                    
+                    results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
+                    results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
+                    results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
+                    results_df = results_df.drop(columns=['sort_time', 'is_starred'])
+                    
                     st.dataframe(results_df, use_container_width=True)
 
-                    # Affichage des graphiques pour les signaux forts
                     strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
                     if strong_signals:
                         st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
                         for result, data in strong_signals:
-                            with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
-                                fig = plot_ichimoku(data, result['Paire'], timeframe)
-                                st.pyplot(fig)
-                                plt.close(fig)
+                            if "FORT" in result["Statut Global"]:
+                                with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
+                                    fig = plot_ichimoku(data, result['Paire'], timeframe)
+                                    st.pyplot(fig)
+                                    plt.close(fig)
                     else:
                         st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
                 else:
