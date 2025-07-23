@@ -114,7 +114,7 @@ if client:
         col1, col2 = st.columns(2)
         with col1:
             pairs_to_scan = st.multiselect(
-                "Choisissez les paires à analyser",
+                "Paires analysées :",
                 [
                     # Paires majeures
                     "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
@@ -224,7 +224,7 @@ if client:
                     results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
                     results_df = results_df.drop(columns=['sort_time', 'is_starred'])
                     
-                    st.dataframe(results_df, use_container_width=True)
+                    st.dataframe(results_df, use_container_width=True, height=600)
 
                     strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
                     if strong_signals:
