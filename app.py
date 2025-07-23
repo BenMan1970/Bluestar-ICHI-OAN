@@ -16,15 +16,19 @@ st.set_page_config(page_title="Scan Ichimoku", layout="wide")
 def get_oanda_client():
     """Initialise et retourne le client API OANDA en lisant les secrets."""
     try:
-        # --- MODIFICATION ICI ---
-        # Lecture des secrets selon votre format : oanda_api_key au lieu de [oanda] api_key
-        access_token = st.secrets["oanda_api_key"]
+        # --- MODIFICATION ICI pour correspondre EXACTEMENT à vos secrets ---
+        # Lecture du secret OANDA_ACCESS_TOKEN en majuscules
+        access_token = st.secrets["OANDA_ACCESS_TOKEN"]
         
-        # Initialisation du client. L'environnement par défaut est 'practice'
-        # ce qui est généralement correct si non spécifié.
+        # Le secret OANDA_ACCOUNT_ID n'est pas nécessaire pour récupérer
+        # les données de marché, mais cette configuration est correcte.
+        
+        # Initialisation du client. 'practice' est l'environnement par défaut
+        # si vous utilisez un compte démo, sinon il se connectera en 'live'.
         return API(access_token=access_token)
+        
     except (KeyError, AttributeError):
-        st.error("Erreur de configuration des secrets OANDA. Assurez-vous que votre secret 'oanda_api_key' est bien défini sur Streamlit Cloud.")
+        st.error("Erreur de configuration des secrets. Assurez-vous que le secret 'OANDA_ACCESS_TOKEN' est bien défini sur Streamlit Cloud.")
         return None
 
 @st.cache_data(ttl=600) # Met en cache les données d'une paire pendant 10 minutes
@@ -151,4 +155,4 @@ if client:
         st.info("Aucun signal d'achat fort détecté pour le moment parmi les paires analysées.")
 
 else:
-    st.warning("L'application n'a pas pu démarrer. Veuillez vérifier la configuration de votre secret 'oanda_api_key'.")
+    st.warning("L'application n'a pas pu démarrer. Veuillez vérifier la configuration de vos secrets Streamlit.")
