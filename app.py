@@ -46,54 +46,37 @@ def calculate_ichimoku(df):
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
-# --- FONCTION DE DÉTECTION DE CROISEMENT DÉFINITIVE ---
 def find_last_tk_cross_info(df):
-    """
-    Détecte le dernier croisement Tenkan/Kijun sur le jeu de données COMPLET.
-    Retourne (heure, direction).
-    """
     signal = np.sign(df['Tenkan'] - df['Kijun'])
     crossovers = signal.diff()
-    
     last_cross_event = crossovers[crossovers != 0]
     
     if not last_cross_event.empty:
         last_cross_time = last_cross_event.index[-1]
-        
         if last_cross_event.iloc[-1] > 0:
             direction = "✅ Haussier"
         else:
             direction = "❌ Baissier"
-            
         return last_cross_time, direction
-        
     return pd.NaT, "Neutre"
 
 def analyze_ichimoku_status(df_full):
-    """
-    Analyse l'état d'Ichimoku avec une logique hybride :
-    - Croisement TK : sur les données complètes (temps réel).
-    - Autres conditions : sur la dernière bougie clôturée (stabilité).
-    """
     if df_full is None or len(df_full) < 79:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    # 1. Analyse du croisement sur le jeu de données complet (temps réel)
+    # 1. Analyse du croisement sur le jeu de données COMPLET (temps réel)
     cross_time, cross_direction = find_last_tk_cross_info(df_full)
     
     # 2. Analyse des autres conditions sur la dernière bougie CLÔTURÉE
     last_closed = df_full.iloc[-2]
     chikou_ref_closed = df_full.iloc[-28]
 
-    # Le statut du croisement est déjà déterminé et correct
     conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    
     if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
     elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
-
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
 
@@ -106,9 +89,8 @@ def analyze_ichimoku_status(df_full):
         
     return {"Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
 
-
 def plot_ichimoku(df, pair, granularity):
-    # Identique à avant
+    # Identique
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan (Conversion)", color="blue", lw=1)
@@ -176,10 +158,9 @@ if client:
                     progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
                     
                     df_full = get_ohlc_data(client, pair, count=200, granularity=timeframe)
-                    if df_full is not None and len(df_full) > 1:
-                        df_ichimoku = calculate_ichimoku(df_full.copy())
-                        
+                    if df_full is not None and not df_full.empty:
                         # --- MODIFICATION CRUCIALE : On passe le DF complet à l'analyse ---
+                        df_ichimoku = calculate_ichimoku(df_full.copy())
                         analysis = analyze_ichimoku_status(df_ichimoku)
                         
                         row = {"Paire": pair, "Statut Global": analysis["Statut"]}
@@ -234,6 +215,6 @@ if client:
                     else:
                         st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
                 else:
-                    st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe}.")
+                    st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
 else:
     st.error("L'application ne peut pas démarrer. Vérifiez vos secrets OANDA.")
