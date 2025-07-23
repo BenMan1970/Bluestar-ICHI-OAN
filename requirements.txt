@@ -1,9 +1,7 @@
 streamlit
 pandas
-plotly
 yfinance
 matplotlib
 fpdf
 Pillow
-kaleido
 numpy
