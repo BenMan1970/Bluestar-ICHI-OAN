@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -47,27 +48,26 @@ def calculate_ichimoku(df):
     return df
 
 def find_last_tk_cross_info(df):
-    signal = np.sign(df['Tenkan'] - df['Kijun'])
-    crossovers = signal.diff()
-    last_cross_event = crossovers[crossovers != 0]
-    
-    if not last_cross_event.empty:
-        last_cross_time = last_cross_event.index[-1]
-        if last_cross_event.iloc[-1] > 0:
-            direction = "✅ Haussier"
-        else:
-            direction = "❌ Baissier"
-        return last_cross_time, direction
-    return pd.NaT, "Neutre"
+    df = df.dropna(subset=["Tenkan", "Kijun"]).copy()
+    prev_diff = df["Tenkan"].shift(1) - df["Kijun"].shift(1)
+    curr_diff = df["Tenkan"] - df["Kijun"]
+    bullish_cross = (prev_diff <= 0) & (curr_diff > 0)
+    bearish_cross = (prev_diff >= 0) & (curr_diff < 0)
+    last_bullish = df[bullish_cross].index.max() if bullish_cross.any() else None
+    last_bearish = df[bearish_cross].index.max() if bearish_cross.any() else None
+
+    if last_bullish and (not last_bearish or last_bullish > last_bearish):
+        return last_bullish, "✅ Haussier"
+    elif last_bearish and (not last_bullish or last_bearish > last_bullish):
+        return last_bearish, "❌ Baissier"
+    else:
+        return pd.NaT, "Neutre"
 
 def analyze_ichimoku_status(df_full):
     if df_full is None or len(df_full) < 79:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    # 1. Analyse du croisement sur le jeu de données COMPLET (temps réel)
     cross_time, cross_direction = find_last_tk_cross_info(df_full)
-    
-    # 2. Analyse des autres conditions sur la dernière bougie CLÔTURÉE
     last_closed = df_full.iloc[-2]
     chikou_ref_closed = df_full.iloc[-28]
 
@@ -90,7 +90,6 @@ def analyze_ichimoku_status(df_full):
     return {"Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
-    # Identique
     fig, ax = plt.subplots(figsize=(12, 7))
     ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
     ax.plot(df.index, df["Tenkan"], label="Tenkan (Conversion)", color="blue", lw=1)
@@ -159,7 +158,6 @@ if client:
                     
                     df_full = get_ohlc_data(client, pair, count=200, granularity=timeframe)
                     if df_full is not None and not df_full.empty:
-                        # --- MODIFICATION CRUCIALE : On passe le DF complet à l'analyse ---
                         df_ichimoku = calculate_ichimoku(df_full.copy())
                         analysis = analyze_ichimoku_status(df_ichimoku)
                         
@@ -207,11 +205,10 @@ if client:
                     if strong_signals:
                         st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
                         for result, data in strong_signals:
-                            if "FORT" in result["Statut Global"]:
-                                with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
-                                    fig = plot_ichimoku(data, result['Paire'], timeframe)
-                                    st.pyplot(fig)
-                                    plt.close(fig)
+                            with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
+                                fig = plot_ichimoku(data, result['Paire'], timeframe)
+                                st.pyplot(fig)
+                                plt.close(fig)
                     else:
                         st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
                 else:
