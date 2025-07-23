@@ -1,140 +1,116 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import yfinance as yf
-from io import BytesIO
-from fpdf import FPDF
-from PIL import Image
+import matplotlib
 import base64
-import numpy as np
+from io import BytesIO
+from oandapyV20 import API
+from oandapyV20.endpoints.instruments import InstrumentsCandles
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Bluestar Ichimoku Pro", layout="wide")
+# Utiliser Agg backend pour éviter les erreurs dans Streamlit Cloud
+matplotlib.use("Agg")
 
-@st.cache_data
-def load_data(pair, interval="1h", period="7d"):
-    data = yf.download(pair, interval=interval, period=period)
-    data.dropna(inplace=True)
-    return data
+# Authentification OANDA
+access_token = st.secrets["oanda_api_key"]
+client = API(access_token=access_token)
+account_id = st.secrets["oanda_account_id"]
+
+# Fonctions utiles pour récupérer les données et calculer Ichimoku
+def get_ohlc(pair, count=120, granularity="H1"):
+    params = {
+        "count": count,
+        "granularity": granularity,
+        "price": "M"
+    }
+    r = InstrumentsCandles(instrument=pair, params=params)
+    client.request(r)
+    ohlc = []
+    for candle in r.response["candles"]:
+        ohlc.append({
+            "Time": candle["time"],
+            "Open": float(candle["mid"]["o"]),
+            "High": float(candle["mid"]["h"]),
+            "Low": float(candle["mid"]["l"]),
+            "Close": float(candle["mid"]["c"])
+        })
+    df = pd.DataFrame(ohlc)
+    df["Time"] = pd.to_datetime(df["Time"])
+    return df.set_index("Time")
 
 def ichimoku(df):
-    high_9 = df['High'].rolling(window=9).max()
-    low_9 = df['Low'].rolling(window=9).min()
-    tenkan_sen = (high_9 + low_9) / 2
-
-    high_26 = df['High'].rolling(window=26).max()
-    low_26 = df['Low'].rolling(window=26).min()
-    kijun_sen = (high_26 + low_26) / 2
-
-    senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(26)
-
-    high_52 = df['High'].rolling(window=52).max()
-    low_52 = df['Low'].rolling(window=52).min()
-    senkou_span_b = ((high_52 + low_52) / 2).shift(26)
-
-    chikou_span = df['Close'].shift(-26)
-
-    df['Tenkan'] = tenkan_sen
-    df['Kijun'] = kijun_sen
-    df['Senkou_A'] = senkou_span_a
-    df['Senkou_B'] = senkou_span_b
-    df['Chikou'] = chikou_span
-
+    df["Tenkan"] = (df["High"].rolling(window=9).max() + df["Low"].rolling(window=9).min()) / 2
+    df["Kijun"] = (df["High"].rolling(window=26).max() + df["Low"].rolling(window=26).min()) / 2
+    df["Senkou_A"] = ((df["Tenkan"] + df["Kijun"]) / 2).shift(26)
+    df["Senkou_B"] = ((df["High"].rolling(window=52).max() + df["Low"].rolling(window=52).min()) / 2).shift(26)
+    df["Chikou"] = df["Close"].shift(-26)
     return df
 
+def check_strong_signal(df):
+    if len(df) < 80 or df[["Tenkan", "Kijun", "Close", "Senkou_A"]].isnull().iloc[-1].any():
+        return False
+    return (
+        df["Tenkan"].iloc[-1] > df["Kijun"].iloc[-1] and
+        df["Close"].iloc[-1] > df["Senkou_A"].iloc[-1]
+    )
+
 def plot_ichimoku(df, pair):
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(df.index, df['Close'], label='Close', linewidth=1.5)
-    ax.plot(df.index, df['Tenkan'], label='Tenkan', linestyle='--')
-    ax.plot(df.index, df['Kijun'], label='Kijun', linestyle='--')
-    ax.plot(df.index, df['Senkou_A'], label='Senkou A', color='green')
-    ax.plot(df.index, df['Senkou_B'], label='Senkou B', color='red')
-    ax.fill_between(df.index, df['Senkou_A'], df['Senkou_B'],
-                    where=df['Senkou_A'] >= df['Senkou_B'], color='green', alpha=0.2)
-    ax.fill_between(df.index, df['Senkou_A'], df['Senkou_B'],
-                    where=df['Senkou_A'] < df['Senkou_B'], color='red', alpha=0.2)
-    ax.set_title(f"Ichimoku Chart - {pair}")
-    ax.legend()
-    st.pyplot(fig)
+    plt.figure(figsize=(10, 5))
+    plt.plot(df.index, df["Close"], label="Close", color="black")
+    plt.plot(df.index, df["Tenkan"], label="Tenkan", color="blue")
+    plt.plot(df.index, df["Kijun"], label="Kijun", color="red")
+    plt.plot(df.index, df["Senkou_A"], label="Senkou A", color="green")
+    plt.plot(df.index, df["Senkou_B"], label="Senkou B", color="orange")
+    plt.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=(df["Senkou_A"] >= df["Senkou_B"]), color='lightgreen', alpha=0.4)
+    plt.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=(df["Senkou_A"] < df["Senkou_B"]), color='lightcoral', alpha=0.4)
+    plt.title(f"Ichimoku - {pair}")
+    plt.legend()
+    plt.tight_layout()
+    return plt
 
-def export_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=10)
-
-    col_width = 40
-    row_height = 8
-
-    # Header
-    for col in df.columns:
-        pdf.cell(col_width, row_height, txt=str(col), border=1)
-    pdf.ln()
-
-    # Rows
-    for i in range(min(len(df), 20)):
-        for col in df.columns:
-            pdf.cell(col_width, row_height, txt=str(df.iloc[i][col]), border=1)
-        pdf.ln()
-
-    return pdf.output(dest='S').encode('latin-1')
-
-def export_png(table_df):
-    fig, ax = plt.subplots(figsize=(10, len(table_df)*0.5))
-    ax.axis('off')
-    tbl = ax.table(cellText=table_df.values,
-                   colLabels=table_df.columns,
-                   cellLoc='center',
-                   loc='center')
+def export_table_as_image(df):
+    fig, ax = plt.subplots(figsize=(10, 2 + len(df) * 0.25))
+    ax.axis("off")
+    tbl = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.scale(1.2, 1.2)
     buf = BytesIO()
-    plt.savefig(buf, format="png", bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
+    fig.savefig(buf, format="png")
+    st.image(buf)
     return buf
 
-# ===================== INTERFACE =====================
+def export_pdf(buf):
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    href = f'<a href="data:application/pdf;base64,{b64}" download="scan_result.pdf">📄 Télécharger le PDF</a>'
+    st.markdown(href, unsafe_allow_html=True)
 
-st.title("📈 Bluestar Ichimoku Pro")
-forex_pairs = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCAD=X', 'USDCHF=X', 'NZDUSD=X', 'XAUUSD=X']
-selected_pairs = st.multiselect("Sélectionnez les paires à scanner :", forex_pairs, default=forex_pairs)
+# Interface principale Streamlit
+st.title("🔍 Scan Ichimoku avec OANDA")
 
-data_summary = []
+pairs = ["EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", "NZD_USD", "XAU_USD"]
+strong_signals = []
 
-for pair in selected_pairs:
-    df = load_data(pair)
+for pair in pairs:
+    df = get_ohlc(pair)
     df = ichimoku(df)
+    if check_strong_signal(df):
+        strong_signals.append((pair, df))
 
-    if df['Tenkan'].iloc[-1] > df['Kijun'].iloc[-1] and df['Close'].iloc[-1] > df['Senkou_A'].iloc[-1]:
-        signal = "🔥 Signal Fort Achat"
-    elif df['Tenkan'].iloc[-1] < df['Kijun'].iloc[-1] and df['Close'].iloc[-1] < df['Senkou_B'].iloc[-1]:
-        signal = "❄️ Signal Fort Vente"
-    else:
-        signal = "⏸️ Neutre"
+if strong_signals:
+    st.subheader("📈 Paires avec signal Ichimoku fort")
+    results = pd.DataFrame([pair for pair, _ in strong_signals], columns=["Paires"])
+    st.dataframe(results)
 
-    data_summary.append({"Pair": pair, "Signal": signal})
+    # Boutons export
+    img_buf = export_table_as_image(results)
+    export_pdf(img_buf)
 
-df_summary = pd.DataFrame(data_summary)
-st.dataframe(df_summary, use_container_width=True)
+    # Graphiques Ichimoku
+    for pair, df in strong_signals:
+        st.markdown(f"### {pair}")
+        fig = plot_ichimoku(df, pair)
+        st.pyplot(fig)
+else:
+    st.info("Aucun signal fort détecté parmi les paires analysées.")
 
-# Affichage graphique Ichimoku pour chaque signal fort
-for i, row in df_summary.iterrows():
-    if "Signal Fort" in row["Signal"]:
-        st.subheader(f"📊 {row['Pair']} - {row['Signal']}")
-        df = load_data(row["Pair"])
-        df = ichimoku(df)
-        plot_ichimoku(df, row["Pair"])
-
-# 📤 Bouton export PDF
-if st.button("📄 Exporter en PDF"):
-    pdf_bytes = export_pdf(df_summary)
-    b64 = base64.b64encode(pdf_bytes).decode()
-    href = f'<a href="data:application/octet-stream;base64,{b64}" download="summary.pdf">📥 Télécharger le PDF</a>'
-    st.markdown(href, unsafe_allow_html=True)
-
-# 🖼️ Bouton export PNG
-if st.button("🖼️ Exporter en image PNG"):
-    img_buf = export_png(df_summary)
-    st.image(img_buf, caption="Capture du tableau", use_column_width=True)
-    b64 = base64.b64encode(img_buf.read()).decode()
-    href = f'<a href="data:image/png;base64,{b64}" download="summary.png">📥 Télécharger l\'image PNG</a>'
-    st.markdown(href, unsafe_allow_html=True)
-
-   
