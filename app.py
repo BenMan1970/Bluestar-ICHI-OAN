@@ -1,35 +1,35 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import plotly.graph_objects as go
+import numpy as np
+from datetime import datetime
+import requests
 
-st.set_page_config(layout="wide")
-st.title("Scanner Ichimoku - Croisement Tenkan / Kijun")
-
-symbols = [
-    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
-    "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
-    "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
-    "CHFJPY", "CADJPY", "AUDJPY", "NZDJPY",
-    "AUDCAD", "AUDCHF", "AUDNZD",
-    "CADCHF", "NZDCAD", "NZDCHF"
+# --- CONFIGURATION ---
+PAIR_LIST = [
+    "AUDCAD", "AUDCHF", "AUDJPY", "AUDNZD", "AUDUSD",
+    "CADCHF", "CADJPY", "CHFJPY", "EURAUD", "EURCAD",
+    "EURCHF", "EURGBP", "EURJPY", "EURNZD", "EURUSD",
+    "GBPAUD", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD",
+    "GBPUSD", "NZDCAD", "NZDCHF", "NZDJPY", "NZDUSD",
+    "USDCAD", "USDCHF", "USDJPY"
 ]
 
 @st.cache_data
-def fetch_data(symbol):
-    df = yf.download(symbol, period="1mo", interval="1h")
-    df.dropna(inplace=True)
+def load_data(symbol, interval="1h", count=150):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}=X&interval={interval}&outputsize={count}&apikey=demo"
+    response = requests.get(url)
+    if response.status_code != 200 or "values" not in response.json():
+        return None
+    df = pd.DataFrame(response.json()["values"])
+    df = df.rename(columns={"datetime": "Date", "high": "High", "low": "Low", "close": "Close"})
+    df["Date"] = pd.to_datetime(df["Date"])
+    df[["High", "Low", "Close"]] = df[["High", "Low", "Close"]].astype(float)
+    df = df.sort_values("Date").reset_index(drop=True)
     return df
 
 def calculate_ichimoku(df):
-    nine_period_high = df["High"].rolling(window=9).max()
-    nine_period_low = df["Low"].rolling(window=9).min()
-    df["Tenkan"] = (nine_period_high + nine_period_low) / 2
-
-    period26_high = df["High"].rolling(window=26).max()
-    period26_low = df["Low"].rolling(window=26).min()
-    df["Kijun"] = (period26_high + period26_low) / 2
-
+    df["Tenkan"] = (df["High"].rolling(window=9).max() + df["Low"].rolling(window=9).min()) / 2
+    df["Kijun"] = (df["High"].rolling(window=26).max() + df["Low"].rolling(window=26).min()) / 2
     return df
 
 def find_last_tk_cross_info(df):
@@ -44,24 +44,30 @@ def find_last_tk_cross_info(df):
     last_bearish = df[bearish_cross].index.max() if bearish_cross.any() else None
 
     if last_bullish and (not last_bearish or last_bullish > last_bearish):
-        return last_bullish, "✅ Haussier"
+        return df.loc[last_bullish, "Date"], "✅ Haussier"
     elif last_bearish and (not last_bullish or last_bearish > last_bullish):
-        return last_bearish, "❌ Baissier"
+        return df.loc[last_bearish, "Date"], "❌ Baissier"
     else:
         return pd.NaT, "Neutre"
 
-results = []
+# --- STREAMLIT APP ---
+st.set_page_config(page_title="Ichimoku Cross Scanner", layout="wide")
+st.title("📈 Scanner Croisement Tenkan/Kijun (Ichimoku)")
 
-for symbol in symbols:
-    try:
-        df = fetch_data(symbol)
-        df = calculate_ichimoku(df)
-        date, direction = find_last_tk_cross_info(df)
-        results.append((symbol, date, direction))
-    except Exception as e:
-        results.append((symbol, "Erreur", str(e)))
+with st.spinner("Chargement des données..."):
+    results = []
+    for pair in PAIR_LIST:
+        df = load_data(pair)
+        if df is not None:
+            df = calculate_ichimoku(df)
+            cross_date, cross_type = find_last_tk_cross_info(df)
+            results.append({
+                "Paire": pair,
+                "Dernier croisement": cross_date,
+                "Type": cross_type
+            })
 
-results_df = pd.DataFrame(results, columns=["Paire", "Dernier Croisement", "Direction"])
-results_df.sort_values(by="Dernier Croisement", ascending=False, inplace=True)
+    result_df = pd.DataFrame(results)
+    result_df = result_df.sort_values("Dernier croisement", ascending=False).reset_index(drop=True)
 
-st.dataframe(results_df, use_container_width=True)
+st.dataframe(result_df, use_container_width=True)
