@@ -16,12 +16,15 @@ st.set_page_config(page_title="Scan Ichimoku", layout="wide")
 def get_oanda_client():
     """Initialise et retourne le client API OANDA en lisant les secrets."""
     try:
-        # Structure recommandée pour les secrets Streamlit
-        access_token = st.secrets["oanda"]["api_key"]
-        environment = st.secrets["oanda"].get("environment", "practice") # 'practice' par défaut
-        return API(access_token=access_token, environment=environment)
+        # --- MODIFICATION ICI ---
+        # Lecture des secrets selon votre format : oanda_api_key au lieu de [oanda] api_key
+        access_token = st.secrets["oanda_api_key"]
+        
+        # Initialisation du client. L'environnement par défaut est 'practice'
+        # ce qui est généralement correct si non spécifié.
+        return API(access_token=access_token)
     except (KeyError, AttributeError):
-        st.error("Erreur de configuration des secrets OANDA. Assurez-vous que votre fichier secrets.toml contient une section [oanda] avec une 'api_key'.")
+        st.error("Erreur de configuration des secrets OANDA. Assurez-vous que votre secret 'oanda_api_key' est bien défini sur Streamlit Cloud.")
         return None
 
 @st.cache_data(ttl=600) # Met en cache les données d'une paire pendant 10 minutes
@@ -67,22 +70,17 @@ def calculate_ichimoku(df):
 
 def check_strong_buy_signal(df):
     """Vérifie un signal d'achat Ichimoku fort sur la dernière bougie clôturée."""
-    if len(df) < 78:  # Nécessaire pour le calcul de Chikou (52 + 26)
+    if len(df) < 78:
         return False
 
-    # Analyse sur la dernière bougie clôturée (avant-dernière ligne)
     last_candle = df.iloc[-2]
-    
-    # Prix de référence pour la Chikou Span (il y a 26 périodes)
     chikou_price_ref = df['Close'].iloc[-28]
     
-    # Conditions pour un signal d'achat fort
     is_tenkan_above_kijun = last_candle["Tenkan"] > last_candle["Kijun"]
     is_price_above_kumo = last_candle["Close"] > last_candle["Senkou_A"] and last_candle["Close"] > last_candle["Senkou_B"]
     is_chikou_above_price = last_candle['Chikou'] > chikou_price_ref
     is_kumo_bullish = last_candle["Senkou_A"] > last_candle["Senkou_B"]
     
-    # Toutes les conditions doivent être réunies
     return all([is_tenkan_above_kijun, is_price_above_kumo, is_chikou_above_price, is_kumo_bullish])
 
 def plot_ichimoku(df, pair):
@@ -116,7 +114,7 @@ client = get_oanda_client()
 if client:
     pairs_to_scan = [
         "EUR_USD", "GBP_USD", "USD_JPY", "USD_CAD", "AUD_USD", 
-        "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD" # Or
+        "NZD_USD", "USD_CHF", "EUR_JPY", "GBP_JPY", "XAU_USD"
     ]
     
     strong_signal_pairs = []
@@ -147,10 +145,10 @@ if client:
             with st.expander(f"Voir le graphique pour {pair}", expanded=True):
                 fig = plot_ichimoku(df, pair)
                 st.pyplot(fig)
-                plt.close(fig) # Libère la mémoire après l'affichage
+                plt.close(fig)
 
     else:
         st.info("Aucun signal d'achat fort détecté pour le moment parmi les paires analysées.")
 
 else:
-    st.warning("L'application n'a pas pu démarrer. Veuillez vérifier la configuration de vos secrets OANDA.")
+    st.warning("L'application n'a pas pu démarrer. Veuillez vérifier la configuration de votre secret 'oanda_api_key'.")
