@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 import pytz
+import numpy as np  # Ajout de la bibliothèque NumPy pour les calculs
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
@@ -45,54 +46,60 @@ def calculate_ichimoku(df):
     df["Chikou"] = df["Close"].shift(-26)
     return df
 
-# --- FONCTION DE CROISEMENT UNIFIÉE ---
+# --- NOUVELLE FONCTION DE DÉTECTION DE CROISEMENT (ROBUSTE) ---
 def find_last_tk_cross_info(df):
     """
-    Trouve l'heure et la direction du dernier croisement Tenkan/Kijun.
-    Retourne (heure du croisement, direction du croisement).
+    Trouve l'heure et la direction du dernier croisement Tenkan/Kijun
+    en utilisant une méthode mathématique fiable.
     """
-    is_bullish = df['Tenkan'] > df['Kijun']
-    # Détecte les points où l'état change par rapport à la bougie précédente
-    crosses = is_bullish.ne(is_bullish.shift(1))
+    # 1. Calculer la position relative de Tenkan par rapport à Kijun
+    #    +1.0 si Tenkan > Kijun, -1.0 si Tenkan < Kijun
+    df['tk_position'] = np.sign(df['Tenkan'] - df['Kijun'])
     
-    # Ignore le premier point qui n'a pas de précédent
-    if len(crosses) > 0:
-        crosses.iloc[0] = False
+    # 2. Un croisement se produit là où la différence de position entre une bougie et la précédente n'est pas nulle
+    df['tk_cross'] = df['tk_position'].diff()
     
-    if crosses.any():
-        last_cross_time = crosses[crosses].index[-1]
-        # Détermine la direction AU MOMENT du croisement
-        is_bullish_at_cross = df.loc[last_cross_time, 'Tenkan'] > df.loc[last_cross_time, 'Kijun']
-        direction = "✅ Haussier" if is_bullish_at_cross else "❌ Baissier"
+    # 3. Trouver la dernière fois où un croisement s'est produit
+    cross_events = df[df['tk_cross'] != 0]
+    
+    if not cross_events.empty:
+        last_cross_time = cross_events.index[-1]
+        
+        # 4. Déterminer la direction en regardant la position APRÈS le croisement
+        #    Si tk_cross est > 0 (ex: passe de -1 à +1), c'est un croisement haussier
+        #    Si tk_cross est < 0 (ex: passe de +1 à -1), c'est un croisement baissier
+        last_cross_event = cross_events.iloc[-1]
+        
+        if last_cross_event['tk_cross'] > 0:
+            direction = "✅ Haussier"
+        elif last_cross_event['tk_cross'] < 0:
+            direction = "❌ Baissier"
+        else:
+            direction = "Neutre" # Cas improbable
+            
         return last_cross_time, direction
         
     return pd.NaT, "Neutre"
+
 
 def analyze_ichimoku_status(df):
     if df is None or len(df) < 79:
         return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
 
-    # Utilisation de la nouvelle fonction unifiée pour le croisement
     cross_time, cross_direction = find_last_tk_cross_info(df)
 
-    # Les autres conditions sont basées sur la dernière bougie CLÔTURÉE
     last_closed = df.iloc[-2]
     chikou_ref_closed = df.iloc[-28]
 
-    # Le statut du croisement vient directement de la fonction unifiée
     conditions = {"Prix vs Kumo": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
     
-    # Analyse des autres conditions sur la bougie clôturée
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Prix vs Kumo"] = "❌ Baissier"
-    
     if last_closed["Chikou"] > chikou_ref_closed["High"]: conditions["Chikou Libre"] = "✅ Haussier"
     elif last_closed["Chikou"] < chikou_ref_closed["Low"]: conditions["Chikou Libre"] = "❌ Baissier"
-
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "❌ Baissier"
 
-    # Statut global
     is_buy = all(c.startswith("✅") for c in conditions.values())
     is_sell = all(c.startswith("❌") for c in conditions.values())
     
