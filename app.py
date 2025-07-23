@@ -4,7 +4,6 @@ import pandas_ta as ta
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 # --- Configuration et Constantes ---
@@ -245,25 +244,24 @@ def analyze_signal_with_double_confirmation(instrument, main_tf, conf_tf1, conf_
     
     return None
 
-def scan_instruments_parallel(instruments_list, main_tf, conf_tf1, conf_tf2):
-    """Scan parallèle des instruments pour améliorer les performances"""
+def scan_instruments_sequential(instruments_list, main_tf, conf_tf1, conf_tf2):
+    """Scan séquentiel des instruments pour éviter les problèmes de threading avec Streamlit"""
     signals = []
+    total = len(instruments_list)
     
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_instrument = {
-            executor.submit(analyze_signal_with_double_confirmation, inst, main_tf, conf_tf1, conf_tf2): inst 
-            for inst in instruments_list
-        }
-        
-        for future in as_completed(future_to_instrument):
-            instrument = future_to_instrument[future]
-            try:
-                result = future.result(timeout=30)  # Timeout de 30 secondes
-                if result:
-                    signals.append(result)
-            except Exception as e:
-                st.warning(f"Erreur lors de l'analyse de {instrument}: {e}")
+    # Créer une barre de progression pour le scan
+    progress_placeholder = st.empty()
     
+    for i, instrument in enumerate(instruments_list):
+        try:
+            progress_placeholder.progress((i + 1) / total, f"Analyse de {instrument}...")
+            result = analyze_signal_with_double_confirmation(instrument, main_tf, conf_tf1, conf_tf2)
+            if result:
+                signals.append(result)
+        except Exception as e:
+            st.warning(f"Erreur lors de l'analyse de {instrument}: {e}")
+    
+    progress_placeholder.empty()
     return signals
 
 # --- Interface Streamlit améliorée ---
@@ -291,11 +289,14 @@ with st.sidebar:
     TK_SPREAD_THRESHOLD = tk_threshold
     KUMO_DISTANCE_THRESHOLD = kumo_threshold
 
-# État de l'application
+# État de l'application - Initialisation complète
 if 'scan_complete' not in st.session_state:
     st.session_state.scan_complete = False
+if 'results_h4' not in st.session_state:
     st.session_state.results_h4 = pd.DataFrame()
+if 'results_h1' not in st.session_state:
     st.session_state.results_h1 = pd.DataFrame()
+if 'last_scan_time' not in st.session_state:
     st.session_state.last_scan_time = None
 
 # Métriques en temps réel
@@ -330,12 +331,12 @@ if st.button("🔍 Lancer le Scan Complet (H4 & H1)", type="primary", use_contai
         # Scan H4 avec confirmation D1 & W1
         status_text.text("Analyse des signaux H4...")
         progress_bar.progress(25)
-        signals_h4 = scan_instruments_parallel(selected_instruments, "H4", "D", "W")
+        signals_h4 = scan_instruments_sequential(selected_instruments, "H4", "D", "W")
         
         # Scan H1 avec confirmation H4 & D1
         status_text.text("Analyse des signaux H1...")
         progress_bar.progress(75)
-        signals_h1 = scan_instruments_parallel(selected_instruments, "H1", "H4", "D")
+        signals_h1 = scan_instruments_sequential(selected_instruments, "H1", "H4", "D")
         
         progress_bar.progress(100)
         status_text.text("✅ Analyse terminée!")
