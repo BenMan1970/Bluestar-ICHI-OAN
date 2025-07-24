@@ -75,11 +75,15 @@ def analyze_ichimoku_status(df_full):
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Nuage"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Nuage"] = "🔴 Baissier"
     
-    # Chikou selon la logique Ichimoku traditionnelle
-    if last_closed["Chikou"] > last_closed["Close"]: 
-        conditions["Chikou Libre"] = "✅ Haussier"
-    elif last_closed["Chikou"] < last_closed["Close"]: 
-        conditions["Chikou Libre"] = "🔴 Baissier"
+    # Chikou selon approche visuelle simplifiée - position du Chikou par rapport au prix à la même période
+    chikou_current_pos = df_full.iloc[-27]["Close"] if len(df_full) >= 27 else last_closed["Close"]  # Prix d'il y a 26 périodes
+    chikou_value = last_closed["Chikou"]
+    
+    if pd.notna(chikou_value) and pd.notna(chikou_current_pos):
+        if chikou_value > chikou_current_pos: 
+            conditions["Chikou Libre"] = "✅ Haussier"
+        elif chikou_value < chikou_current_pos: 
+            conditions["Chikou Libre"] = "🔴 Baissier"
     
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "🔴 Baissier"
