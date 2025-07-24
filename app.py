@@ -75,14 +75,11 @@ def analyze_ichimoku_status(df_full):
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Nuage"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Nuage"] = "🔴 Baissier"
     
-    # Chikou simplifié : au-dessus du nuage ET en-dessous du prix pour achat, inverse pour vente
-    chikou_above_kumo = last_closed["Chikou"] > max(last_closed["Senkou_A"], last_closed["Senkou_B"])
-    chikou_below_kumo = last_closed["Chikou"] < min(last_closed["Senkou_A"], last_closed["Senkou_B"])
-    chikou_below_price = last_closed["Chikou"] < last_closed["Close"]
-    chikou_above_price = last_closed["Chikou"] > last_closed["Close"]
-    
-    if chikou_above_kumo and chikou_below_price: conditions["Chikou Libre"] = "✅ Haussier"
-    elif chikou_below_kumo and chikou_above_price: conditions["Chikou Libre"] = "🔴 Baissier"
+    # Chikou selon la logique Ichimoku traditionnelle
+    if last_closed["Chikou"] > last_closed["Close"]: 
+        conditions["Chikou Libre"] = "✅ Haussier"
+    elif last_closed["Chikou"] < last_closed["Close"]: 
+        conditions["Chikou Libre"] = "🔴 Baissier"
     
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "🔴 Baissier"
