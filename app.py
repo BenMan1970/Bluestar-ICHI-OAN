@@ -113,46 +113,14 @@ def plot_ichimoku(df, pair, granularity):
 
 # --- INTERFACE UTILISATEUR STREAMLIT ---
 
-st.title("🔎 Scanner Ichimoku Pro (H1 & H4)")
-st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps H1 et H4.")
+st.title("🔎 Scanner Ichimoku Pro (M15, H1 & H4)")
+st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps M15, H1 et H4.")
 
 client = get_oanda_client()
 
 if client:
-    with st.expander("⚙️ Configuration du Scan", expanded=True):
+    with st.expander("⚙️ Configuration du Scan", expanded=False):
         col1, col2 = st.columns(2)
-        with col1:
-            pairs_to_scan = st.multiselect(
-                "Paires analysées :",
-                [
-                    # Paires majeures
-                    "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
-                    # Paires croisées EUR
-                    "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
-                    # Paires croisées GBP
-                    "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
-                    # Paires croisées JPY
-                    "CHF_JPY", "CAD_JPY", "AUD_JPY", "NZD_JPY",
-                    # Autres paires croisées
-                    "AUD_CAD", "AUD_CHF", "AUD_NZD", "CAD_CHF", "NZD_CAD", "NZD_CHF",
-                    # Métaux précieux
-                    "XAU_USD"
-                ],
-                default=[
-                    # Paires majeures
-                    "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
-                    # Paires croisées EUR
-                    "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
-                    # Paires croisées GBP
-                    "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
-                    # Paires croisées JPY
-                    "CHF_JPY", "CAD_JPY", "AUD_JPY", "NZD_JPY",
-                    # Autres paires croisées
-                    "AUD_CAD", "AUD_CHF", "AUD_NZD", "CAD_CHF", "NZD_CAD", "NZD_CHF",
-                    # Métaux précieux
-                    "XAU_USD"
-                ]
-            )
         with col2:
             timezone_options = {
                 "GMT+1": "Etc/GMT-1",
@@ -173,7 +141,23 @@ if client:
             )
             selected_timezone = timezone_options[selected_friendly_name]
 
-    if st.button("🚀 Lancer le Scan (H1 & H4)", type="primary"):
+    # Définition des paires à scanner par défaut
+    pairs_to_scan = [
+        # Paires majeures
+        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
+        # Paires croisées EUR
+        "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
+        # Paires croisées GBP
+        "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
+        # Paires croisées JPY
+        "CHF_JPY", "CAD_JPY", "AUD_JPY", "NZD_JPY",
+        # Autres paires croisées
+        "AUD_CAD", "AUD_CHF", "AUD_NZD", "CAD_CHF", "NZD_CAD", "NZD_CHF",
+        # Métaux précieux
+        "XAU_USD"
+    ]
+
+    if st.button("🚀 Lancer le Scan (M15, H1 & H4)", type="primary"):
         if not pairs_to_scan:
             st.warning("Veuillez sélectionner au moins une paire.")
         else:
