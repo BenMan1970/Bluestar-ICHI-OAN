@@ -59,8 +59,20 @@ def find_last_tk_cross_info(df):
     else:
         return pd.NaT, "Neutre"
 
-# --- DÉBUT DE LA SECTION MODIFIÉE ---
-# La fonction retourne maintenant les détails de chaque condition.
+# --- DÉBUT DE LA SECTION MODIFIÉE (1/2) ---
+# Ajout d'une fonction pour générer les étoiles/symboles visuels.
+def generate_visual_score(score):
+    """Transforme un score numérique en une représentation visuelle."""
+    if score > 0:
+        return '🔵' * score  # "Étoiles" bleues pour un score positif
+    elif score < 0:
+        return '🔴' * abs(score)  # "Étoiles" rouges pour un score négatif
+    elif score == 0:
+        return '⚪'  # Symbole neutre pour un score de zéro
+    return "N/A"
+# --- FIN DE LA SECTION MODIFIÉE (1/2) ---
+
+
 def analyze_ichimoku_status(df_full):
     if df_full is None or len(df_full) < 79:
         conditions = {
@@ -74,6 +86,7 @@ def analyze_ichimoku_status(df_full):
     score = 0
     conditions = {}
 
+    # ... (La logique de calcul du score reste identique) ...
     # 1. Prix par rapport au nuage
     if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
         kumo_high = max(last_closed["Senkou_A"], last_closed["Senkou_B"])
@@ -133,15 +146,19 @@ def analyze_ichimoku_status(df_full):
     else:
         conditions["4. Chikou"] = "N/A"
 
-    statut_text = f"({score}/4)" if abs(score) < 4 else ""
-    if score == 4: status = "🟢 ACHAT FORT"
-    elif score > 0: status = f"✅ Haussier {statut_text}"
-    elif score == -4: status = "🔴 VENTE FORTE"
-    elif score < 0: status = f"🔴 Baissier ({abs(score)}/4)"
-    else: status = "🟡 Neutre (0/4)"
 
-    return {"Score": f"{score}/4", "Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
-# --- FIN DE LA SECTION MODIFIÉE ---
+    if score == 4: status = "🟢 ACHAT FORT"
+    elif score > 0: status = f"✅ Haussier"
+    elif score == -4: status = "🔴 VENTE FORTE"
+    elif score < 0: status = f"🔴 Baissier"
+    else: status = "🟡 Neutre"
+    
+    # --- DÉBUT DE LA SECTION MODIFIÉE (2/2) ---
+    # On appelle la nouvelle fonction pour créer le score visuel
+    visual_score = generate_visual_score(score)
+    # --- FIN DE LA SECTION MODIFIÉE (2/2) ---
+
+    return {"Score": visual_score, "Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -204,16 +221,13 @@ if client:
                 if df_full is not None and not df_full.empty:
                     df_ichimoku = calculate_ichimoku(df_full.copy())
                     analysis = analyze_ichimoku_status(df_ichimoku)
-
-                    # --- DÉBUT DE LA SECTION MODIFIÉE ---
-                    # On ajoute les détails du scoring dans la ligne du tableau
+                    
                     row = {
                         "Paire": pair,
                         "Tendance": analysis["Statut"],
                         "Score": analysis["Score"],
                     }
                     row.update(analysis["Conditions"])
-                    # --- FIN DE LA SECTION MODIFIÉE ---
                     
                     row["cross_time_obj"] = analysis["cross_time"]
                     all_results_by_tf[timeframe].append((row, analysis.get("data")))
@@ -241,16 +255,13 @@ if client:
                     display_data.append(row_data)
 
                 results_df = pd.DataFrame(display_data)
-
-                # --- DÉBUT DE LA SECTION MODIFIÉE ---
-                # On s'assure que les colonnes sont dans un ordre logique pour l'affichage
+                
                 cols_order = ["Tendance", "Score", "1. Prix / Nuage", "2. Tenkan / Kijun", 
                               "3. Kumo Futur", "4. Chikou", "Dernier Croisement TK"]
-                # On garde seulement les colonnes qui existent dans le dataframe pour éviter une erreur
+                
                 final_cols = [col for col in cols_order if col in results_df.columns]
                 results_df = results_df.set_index("Paire")[final_cols]
-                # --- FIN DE LA SECTION MODIFIÉE ---
-
+                
                 results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
                 results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
                 results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
