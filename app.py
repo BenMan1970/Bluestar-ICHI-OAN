@@ -48,124 +48,67 @@ def find_last_tk_cross_info(df):
     bearish_cross = (prev_diff >= 0) & (curr_diff < 0)
     last_bullish = df[bullish_cross].index.max() if bullish_cross.any() else None
     last_bearish = df[bearish_cross].index.max() if bearish_cross.any() else None
-
-    if last_bullish and (not last_bearish or last_bullish > last_bearish):
-        return last_bullish
-    elif last_bearish and (not last_bullish or last_bearish > last_bullish):
-        return last_bearish
-    else:
-        return pd.NaT
+    if last_bullish and (not last_bearish or last_bullish > last_bearish): return last_bullish
+    elif last_bearish and (not last_bullish or last_bearish > last_bullish): return last_bearish
+    else: return pd.NaT
 
 def generate_visual_score(score):
-    if score > 0:
-        return '🔵' * score
-    elif score < 0:
-        return '🔴' * abs(score)
-    elif score == 0:
-        return '⚪'
+    if score > 0: return '🔵' * score
+    elif score < 0: return '🔴' * abs(score)
+    elif score == 0: return '⚪'
     return "N/A"
 
+# --- DÉBUT DE LA SECTION MODIFIÉE (1/2) ---
+# La fonction d'analyse retourne maintenant si le signal est "fort" selon les nouveaux critères
 def analyze_ichimoku_status(df_full):
     if df_full is None or len(df_full) < 79:
-        conditions = {
-            "1. Prix / Nuage": "N/A", "2. Tenkan / Kijun": "N/A",
-            "3. Kumo Futur": "N/A", "4. Chikou": "N/A"
-        }
-        return {"Score": "N/A", "Statut": "Données Insuffisantes", "Conditions": conditions, "cross_time": pd.NaT}
+        return {"is_strong_buy": False, "is_strong_sell": False, "Score_visuel": "N/A"}
 
-    cross_time = find_last_tk_cross_info(df_full)
     last_closed = df_full.iloc[-2]
-    score = 0
-    conditions = {}
+    scores = {'prix': 0, 'tk': 0, 'kumo': 0, 'chikou': 0}
 
-    # 1. Prix par rapport au nuage
+    # Calcul des scores partiels
     if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
-        kumo_high = max(last_closed["Senkou_A"], last_closed["Senkou_B"])
-        kumo_low = min(last_closed["Senkou_A"], last_closed["Senkou_B"])
-        if last_closed["Close"] > kumo_high:
-            score += 1
-            conditions["1. Prix / Nuage"] = "✅ Au-dessus"
-        elif last_closed["Close"] < kumo_low:
-            score -= 1
-            conditions["1. Prix / Nuage"] = "🔴 En dessous"
-        else:
-            conditions["1. Prix / Nuage"] = "🟡 Neutre (dedans)"
-    else:
-        conditions["1. Prix / Nuage"] = "N/A"
-
-    # 2. Tenkan / Kijun
+        if last_closed["Close"] > max(last_closed["Senkou_A"], last_closed["Senkou_B"]): scores['prix'] = 1
+        elif last_closed["Close"] < min(last_closed["Senkou_A"], last_closed["Senkou_B"]): scores['prix'] = -1
+    
     if pd.notna(last_closed["Tenkan"]) and pd.notna(last_closed["Kijun"]):
-        if last_closed["Tenkan"] > last_closed["Kijun"]:
-            score += 1
-            conditions["2. Tenkan / Kijun"] = "✅ Haussier"
-        elif last_closed["Tenkan"] < last_closed["Kijun"]:
-            score -= 1
-            conditions["2. Tenkan / Kijun"] = "🔴 Baissier"
-        else:
-            conditions["2. Tenkan / Kijun"] = "🟡 Neutre"
-    else:
-        conditions["2. Tenkan / Kijun"] = "N/A"
+        if last_closed["Tenkan"] > last_closed["Kijun"]: scores['tk'] = 1
+        elif last_closed["Tenkan"] < last_closed["Kijun"]: scores['tk'] = -1
 
-    # 3. Kumo futur
     if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
-        if last_closed["Senkou_A"] > last_closed["Senkou_B"]:
-            score += 1
-            conditions["3. Kumo Futur"] = "✅ Vert"
-        elif last_closed["Senkou_A"] < last_closed["Senkou_B"]:
-            score -= 1
-            conditions["3. Kumo Futur"] = "🔴 Rouge"
-        else:
-            conditions["3. Kumo Futur"] = "🟡 Plat"
-    else:
-        conditions["3. Kumo Futur"] = "N/A"
+        if last_closed["Senkou_A"] > last_closed["Senkou_B"]: scores['kumo'] = 1
+        elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: scores['kumo'] = -1
 
-    # 4. Chikou
     if len(df_full) > 27:
         chikou_value = last_closed['Close']
         past_candle = df_full.iloc[-27]
         if pd.notna(chikou_value) and pd.notna(past_candle['High']) and pd.notna(past_candle['Senkou_A']) and pd.notna(past_candle['Senkou_B']):
-            past_price_high = past_candle['High']
-            past_kumo_high = max(past_candle['Senkou_A'], past_candle['Senkou_B'])
-            if chikou_value > past_price_high and chikou_value > past_kumo_high:
-                score += 1
-                conditions["4. Chikou"] = "✅ Libre (Haut)"
+            if chikou_value > past_candle['High'] and chikou_value > max(past_candle['Senkou_A'], past_candle['Senkou_B']):
+                scores['chikou'] = 1
             else:
-                score -= 1
-                conditions["4. Chikou"] = "🔴 Bloqué/Bas"
-        else:
-            conditions["4. Chikou"] = "N/A"
-    else:
-        conditions["4. Chikou"] = "N/A"
-
-    if score == 4: status = "🟢 ACHAT FORT"
-    elif score > 0: status = f"✅ Haussier"
-    elif score == -4: status = "🔴 VENTE FORTE"
-    elif score < 0: status = f"🔴 Baissier"
-    else: status = "🟡 Neutre"
+                scores['chikou'] = -1
     
-    visual_score = generate_visual_score(score)
-
-    return {"Score": visual_score, "Statut": status, "Conditions": conditions, "cross_time": cross_time}
+    final_score = sum(scores.values())
+    
+    # Définition d'un signal fort selon les critères : score parfait, ou score presque parfait si Chikou est le seul fautif.
+    is_strong_buy = (final_score == 4) or (final_score == 3 and scores['chikou'] != 1)
+    is_strong_sell = (final_score == -4) or (final_score == -3 and scores['chikou'] != -1)
+    
+    return {
+        "is_strong_buy": is_strong_buy,
+        "is_strong_sell": is_strong_sell,
+        "Score_visuel": generate_visual_score(final_score)
+    }
+# --- FIN DE LA SECTION MODIFIÉE (1/2) ---
 
 st.title("🔎 Scanner Ichimoku Pro (M15, H1 & H4)")
-st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps M15, H1 et H4.")
+st.markdown("Analyse des **signaux alignés** sur plusieurs unités de temps pour des stratégies robustes.")
 
 client = get_oanda_client()
 
 if client:
-    with st.expander("⚙️ Configuration du Scan", expanded=False):
-        col1, col2 = st.columns(2)
-        with col2:
-            timezone_options = {
-                "GMT+1": "Etc/GMT-1",
-                "Paris / Berlin (GMT+2)": "Europe/Paris",
-                "Londres (GMT+1 / BST)": "Europe/London",
-                "New York (GMT-4 / EDT)": "America/New_York",
-                "Tokyo (GMT+9)": "Asia/Tokyo",
-                "UTC (Temps Universel)": "UTC"
-            }
-            selected_friendly_name = st.selectbox("Choisissez votre fuseau horaire", options=list(timezone_options.keys()), index=0)
-            selected_timezone = timezone_options[selected_friendly_name]
+    st.info("Le scanner recherche les paires dont les signaux Ichimoku sont fortement alignés sur au moins **2 des 3 unités de temps** (M15, H1, H4).")
 
     pairs_to_scan = [
         "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
@@ -176,17 +119,18 @@ if client:
         "XAU_USD"
     ]
 
-    if st.button("🚀 Lancer le Scan (M15, H1 & H4)", type="primary"):
+    if st.button("🚀 Lancer le Scan des Signaux Alignés", type="primary"):
         timeframes_to_scan = ["M15", "H1", "H4"]
-        all_results_by_tf = {tf: [] for tf in timeframes_to_scan}
-        all_cross_times = []
+        # On stocke tous les résultats dans une structure unique pour la synthèse
+        all_results = {}
 
         progress_bar = st.progress(0, text="Lancement de l'analyse multi-temporelle...")
         total_scans = len(pairs_to_scan) * len(timeframes_to_scan)
         scan_count = 0
 
-        for timeframe in timeframes_to_scan:
-            for pair in pairs_to_scan:
+        for pair in pairs_to_scan:
+            all_results[pair] = {}
+            for timeframe in timeframes_to_scan:
                 scan_count += 1
                 progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
 
@@ -194,54 +138,38 @@ if client:
                 if df_full is not None and not df_full.empty:
                     df_ichimoku = calculate_ichimoku(df_full.copy())
                     analysis = analyze_ichimoku_status(df_ichimoku)
-                    
-                    row = {
-                        "Paire": pair,
-                        "Tendance": analysis["Statut"],
-                        "Score": analysis["Score"],
-                    }
-                    row.update(analysis["Conditions"])
-                    
-                    row["cross_time_obj"] = analysis["cross_time"]
-                    all_results_by_tf[timeframe].append(row)
-                    if pd.notna(analysis["cross_time"]):
-                        all_cross_times.append(analysis["cross_time"])
-
+                    all_results[pair][timeframe] = analysis
+        
         progress_bar.empty()
-        most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
 
-        for timeframe, results in all_results_by_tf.items():
-            st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
-            if results:
-                display_data = []
-                for row_data in results:
-                    cross_time = row_data["cross_time_obj"]
-                    if pd.notna(cross_time):
-                        localized_time = cross_time.tz_convert(selected_timezone)
-                        time_str = localized_time.strftime("%Y-%m-%d %H:%M")
-                        if cross_time == most_recent_cross_time:
-                            time_str += " ⭐"
-                    else:
-                        time_str = "N/A"
-                    row_data["Dernier Croisement TK"] = time_str
-                    del row_data["cross_time_obj"]
-                    display_data.append(row_data)
+        # --- DÉBUT DE LA SECTION MODIFIÉE (2/2) ---
+        # Logique de synthèse pour créer le tableau final.
+        
+        aligned_signals = []
+        for pair, tf_results in all_results.items():
+            strong_buy_count = sum(1 for tf in timeframes_to_scan if tf_results.get(tf, {}).get("is_strong_buy"))
+            strong_sell_count = sum(1 for tf in timeframes_to_scan if tf_results.get(tf, {}).get("is_strong_sell"))
+            
+            tendance = None
+            if strong_buy_count >= 2:
+                tendance = "🟢 Achat Aligné"
+            elif strong_sell_count >= 2:
+                tendance = "🔴 Vente Alignée"
+            
+            if tendance:
+                signal_row = {"Paire": pair, "Tendance": tendance}
+                for tf in timeframes_to_scan:
+                    signal_row[f"Score {tf}"] = tf_results.get(tf, {}).get("Score_visuel", "N/A")
+                aligned_signals.append(signal_row)
 
-                results_df = pd.DataFrame(display_data)
-                
-                cols_order = ["Tendance", "Score", "1. Prix / Nuage", "2. Tenkan / Kijun", 
-                              "3. Kumo Futur", "4. Chikou", "Dernier Croisement TK"]
-                
-                final_cols = [col for col in cols_order if col in results_df.columns]
-                results_df = results_df.set_index("Paire")[final_cols]
-                
-                results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
-                results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
-                results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
-                results_df = results_df.drop(columns=['sort_time', 'is_starred'])
+        st.subheader("🚨 Synthèse des Signaux Forts Alignés")
 
-                st.dataframe(results_df, use_container_width=True, height=600)
-            else:
-                st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
+        if aligned_signals:
+            results_df = pd.DataFrame(aligned_signals).set_index("Paire")
+            st.dataframe(results_df, use_container_width=True)
+            st.success(f"Analyse terminée. {len(aligned_signals)} paire(s) avec des signaux forts alignés trouvée(s).")
+        else:
+            st.info("Aucun signal fort aligné sur au moins 2 unités de temps n'a été trouvé pour cette analyse.")
+        # --- FIN DE LA SECTION MODIFIÉE (2/2) ---
 else:
     st.error("L'application ne peut pas démarrer. Vérifiez vos secrets OANDA.")
