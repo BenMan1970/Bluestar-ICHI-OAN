@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,11 +9,8 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
 
-# --- Configuration de la page ---
 matplotlib.use("Agg")
 st.set_page_config(page_title="Scanner Ichimoku Pro", layout="wide")
-
-# --- Fonctions Cœur ---
 
 @st.cache_resource(ttl=3600)
 def get_oanda_client():
@@ -68,33 +66,35 @@ def analyze_ichimoku_status(df_full):
 
     cross_time, cross_direction = find_last_tk_cross_info(df_full)
     last_closed = df_full.iloc[-2]
-    chikou_ref_closed = df_full.iloc[-28]
 
     conditions = {"Nuage": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
-    
+
     if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Nuage"] = "✅ Haussier"
     elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Nuage"] = "🔴 Baissier"
-    
-    # Chikou selon approche visuelle simplifiée - position du Chikou par rapport au prix à la même période
-    chikou_current_pos = df_full.iloc[-27]["Close"] if len(df_full) >= 27 else last_closed["Close"]  # Prix d'il y a 26 périodes
-    chikou_value = last_closed["Chikou"]
-    
-    if pd.notna(chikou_value) and pd.notna(chikou_current_pos):
-        if chikou_value > chikou_current_pos: 
-            conditions["Chikou Libre"] = "✅ Haussier"
-        elif chikou_value < chikou_current_pos: 
-            conditions["Chikou Libre"] = "🔴 Baissier"
-    
+
+    if len(df_full) >= 60:
+        chikou_index = -26
+        if len(df_full) + chikou_index >= 10:
+            chikou_value = df_full.iloc[chikou_index]["Chikou"]
+            window_prices = df_full.iloc[chikou_index-5:chikou_index+5]
+            if pd.notna(chikou_value):
+                if chikou_value > window_prices["High"].max():
+                    conditions["Chikou Libre"] = "✅ Haussier"
+                elif chikou_value < window_prices["Low"].min():
+                    conditions["Chikou Libre"] = "🔴 Baissier"
+                else:
+                    conditions["Chikou Libre"] = "🟡 Neutre"
+
     if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
     elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "🔴 Baissier"
 
     is_buy = all(c.startswith("✅") for c in conditions.values())
     is_sell = all(c.startswith("🔴") for c in conditions.values())
-    
+
     status = "🟡 Neutre"
     if is_buy: status = "🟢 ACHAT FORT"
     elif is_sell: status = "🔴 VENTE FORTE"
-        
+
     return {"Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
 
 def plot_ichimoku(df, pair, granularity):
@@ -110,8 +110,6 @@ def plot_ichimoku(df, pair, granularity):
     ax.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
     return fig
-
-# --- INTERFACE UTILISATEUR STREAMLIT ---
 
 st.title("🔎 Scanner Ichimoku Pro (M15, H1 & H4)")
 st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps M15, H1 et H4.")
@@ -130,106 +128,84 @@ if client:
                 "Tokyo (GMT+9)": "Asia/Tokyo",
                 "UTC (Temps Universel)": "UTC"
             }
-            friendly_names = list(timezone_options.keys())
-            default_index = friendly_names.index("GMT+1")
-
-            selected_friendly_name = st.selectbox(
-                "Choisissez votre fuseau horaire",
-                options=friendly_names,
-                index=default_index,
-                help="Les heures des croisements seront affichées dans ce fuseau horaire."
-            )
+            selected_friendly_name = st.selectbox("Choisissez votre fuseau horaire", options=list(timezone_options.keys()), index=0)
             selected_timezone = timezone_options[selected_friendly_name]
 
-    # Définition des paires à scanner par défaut
     pairs_to_scan = [
-        # Paires majeures
         "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD",
-        # Paires croisées EUR
         "EUR_GBP", "EUR_JPY", "EUR_CHF", "EUR_CAD", "EUR_AUD", "EUR_NZD",
-        # Paires croisées GBP
         "GBP_JPY", "GBP_CHF", "GBP_CAD", "GBP_AUD", "GBP_NZD",
-        # Paires croisées JPY
         "CHF_JPY", "CAD_JPY", "AUD_JPY", "NZD_JPY",
-        # Autres paires croisées
         "AUD_CAD", "AUD_CHF", "AUD_NZD", "CAD_CHF", "NZD_CAD", "NZD_CHF",
-        # Métaux précieux
         "XAU_USD"
     ]
 
     if st.button("🚀 Lancer le Scan (M15, H1 & H4)", type="primary"):
-        if not pairs_to_scan:
-            st.warning("Veuillez sélectionner au moins une paire.")
-        else:
-            timeframes_to_scan = ["H1", "H4"]
-            all_results_by_tf = {tf: [] for tf in timeframes_to_scan}
-            all_cross_times = []
+        timeframes_to_scan = ["M15", "H1", "H4"]
+        all_results_by_tf = {tf: [] for tf in timeframes_to_scan}
+        all_cross_times = []
 
-            progress_bar = st.progress(0, text="Lancement de l'analyse multi-temporelle...")
-            total_scans = len(pairs_to_scan) * len(timeframes_to_scan)
-            scan_count = 0
+        progress_bar = st.progress(0, text="Lancement de l'analyse multi-temporelle...")
+        total_scans = len(pairs_to_scan) * len(timeframes_to_scan)
+        scan_count = 0
 
-            for timeframe in timeframes_to_scan:
-                for pair in pairs_to_scan:
-                    scan_count += 1
-                    progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
-                    
-                    df_full = get_ohlc_data(client, pair, count=200, granularity=timeframe)
-                    if df_full is not None and not df_full.empty:
-                        df_ichimoku = calculate_ichimoku(df_full.copy())
-                        analysis = analyze_ichimoku_status(df_ichimoku)
-                        
-                        row = {"Paire": pair, "Statut Global": analysis["Statut"]}
-                        row.update(analysis["Conditions"])
-                        row["cross_time_obj"] = analysis["cross_time"]
-                        
-                        all_results_by_tf[timeframe].append((row, analysis.get("data")))
-                        if pd.notna(analysis["cross_time"]):
-                            all_cross_times.append(analysis["cross_time"])
+        for timeframe in timeframes_to_scan:
+            for pair in pairs_to_scan:
+                scan_count += 1
+                progress_bar.progress(scan_count / total_scans, text=f"Analyse de {pair} sur {timeframe}...")
 
-            progress_bar.empty()
-            
-            most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
+                df_full = get_ohlc_data(client, pair, count=200, granularity=timeframe)
+                if df_full is not None and not df_full.empty:
+                    df_ichimoku = calculate_ichimoku(df_full.copy())
+                    analysis = analyze_ichimoku_status(df_ichimoku)
 
-            for timeframe, results in all_results_by_tf.items():
-                st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
-                if results:
-                    display_data = []
-                    for row_data, _ in results:
-                        cross_time = row_data["cross_time_obj"]
-                        
-                        if pd.notna(cross_time):
-                            localized_time = cross_time.tz_convert(selected_timezone)
-                            time_str = localized_time.strftime("%Y-%m-%d %H:%M")
-                            if cross_time == most_recent_cross_time:
-                                time_str += " ⭐"
-                        else:
-                            time_str = "N/A"
-                        
-                        row_data["Dernier Croisement TK"] = time_str
-                        del row_data["cross_time_obj"]
-                        display_data.append(row_data)
+                    row = {"Paire": pair, "Statut Global": analysis["Statut"]}
+                    row.update(analysis["Conditions"])
+                    row["cross_time_obj"] = analysis["cross_time"]
 
-                    results_df = pd.DataFrame(display_data).set_index("Paire")
-                    
-                    results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
-                    results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
-                    results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
-                    results_df = results_df.drop(columns=['sort_time', 'is_starred'])
-                    
-                    st.dataframe(results_df, use_container_width=True, height=600)
+                    all_results_by_tf[timeframe].append((row, analysis.get("data")))
+                    if pd.notna(analysis["cross_time"]):
+                        all_cross_times.append(analysis["cross_time"])
 
-                    strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
-                    if strong_signals:
-                        st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
-                        for result, data in strong_signals:
-                            with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
-                                fig = plot_ichimoku(data, result['Paire'], timeframe)
-                                st.pyplot(fig)
-                                plt.close(fig)
+        progress_bar.empty()
+        most_recent_cross_time = max(all_cross_times) if all_cross_times else pd.NaT
+
+        for timeframe, results in all_results_by_tf.items():
+            st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
+            if results:
+                display_data = []
+                for row_data, _ in results:
+                    cross_time = row_data["cross_time_obj"]
+                    if pd.notna(cross_time):
+                        localized_time = cross_time.tz_convert(selected_timezone)
+                        time_str = localized_time.strftime("%Y-%m-%d %H:%M")
+                        if cross_time == most_recent_cross_time:
+                            time_str += " ⭐"
                     else:
-                        st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
+                        time_str = "N/A"
+                    row_data["Dernier Croisement TK"] = time_str
+                    del row_data["cross_time_obj"]
+                    display_data.append(row_data)
+
+                results_df = pd.DataFrame(display_data).set_index("Paire")
+                results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
+                results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
+                results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
+                results_df = results_df.drop(columns=['sort_time', 'is_starred'])
+
+                st.dataframe(results_df, use_container_width=True, height=600)
+
+                strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
+                if strong_signals:
+                    st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
+                    for result, data in strong_signals:
+                        with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
+                            fig = plot_ichimoku(data, result['Paire'], timeframe)
+                            st.pyplot(fig)
+                            plt.close(fig)
                 else:
-                    st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
+                    st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
+            else:
+                st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
 else:
     st.error("L'application ne peut pas démarrer. Vérifiez vos secrets OANDA.")
