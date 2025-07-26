@@ -1,14 +1,11 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib
 import pytz
 import numpy as np
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.instruments import InstrumentsCandles
 
-matplotlib.use("Agg")
 st.set_page_config(page_title="Scanner Ichimoku Pro", layout="wide")
 
 @st.cache_resource(ttl=3600)
@@ -53,25 +50,20 @@ def find_last_tk_cross_info(df):
     last_bearish = df[bearish_cross].index.max() if bearish_cross.any() else None
 
     if last_bullish and (not last_bearish or last_bullish > last_bearish):
-        return last_bullish, "✅ Haussier"
+        return last_bullish
     elif last_bearish and (not last_bullish or last_bearish > last_bullish):
-        return last_bearish, "🔴 Baissier"
+        return last_bearish
     else:
-        return pd.NaT, "Neutre"
+        return pd.NaT
 
-# --- DÉBUT DE LA SECTION MODIFIÉE (1/2) ---
-# Ajout d'une fonction pour générer les étoiles/symboles visuels.
 def generate_visual_score(score):
-    """Transforme un score numérique en une représentation visuelle."""
     if score > 0:
-        return '🔵' * score  # "Étoiles" bleues pour un score positif
+        return '🔵' * score
     elif score < 0:
-        return '🔴' * abs(score)  # "Étoiles" rouges pour un score négatif
+        return '🔴' * abs(score)
     elif score == 0:
-        return '⚪'  # Symbole neutre pour un score de zéro
+        return '⚪'
     return "N/A"
-# --- FIN DE LA SECTION MODIFIÉE (1/2) ---
-
 
 def analyze_ichimoku_status(df_full):
     if df_full is None or len(df_full) < 79:
@@ -79,14 +71,13 @@ def analyze_ichimoku_status(df_full):
             "1. Prix / Nuage": "N/A", "2. Tenkan / Kijun": "N/A",
             "3. Kumo Futur": "N/A", "4. Chikou": "N/A"
         }
-        return {"Score": "N/A", "Statut": "Données Insuffisantes", "Conditions": conditions, "data": None, "cross_time": pd.NaT}
+        return {"Score": "N/A", "Statut": "Données Insuffisantes", "Conditions": conditions, "cross_time": pd.NaT}
 
-    cross_time, _ = find_last_tk_cross_info(df_full)
+    cross_time = find_last_tk_cross_info(df_full)
     last_closed = df_full.iloc[-2]
     score = 0
     conditions = {}
 
-    # ... (La logique de calcul du score reste identique) ...
     # 1. Prix par rapport au nuage
     if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
         kumo_high = max(last_closed["Senkou_A"], last_closed["Senkou_B"])
@@ -146,33 +137,16 @@ def analyze_ichimoku_status(df_full):
     else:
         conditions["4. Chikou"] = "N/A"
 
-
     if score == 4: status = "🟢 ACHAT FORT"
     elif score > 0: status = f"✅ Haussier"
     elif score == -4: status = "🔴 VENTE FORTE"
     elif score < 0: status = f"🔴 Baissier"
     else: status = "🟡 Neutre"
     
-    # --- DÉBUT DE LA SECTION MODIFIÉE (2/2) ---
-    # On appelle la nouvelle fonction pour créer le score visuel
     visual_score = generate_visual_score(score)
-    # --- FIN DE LA SECTION MODIFIÉE (2/2) ---
 
-    return {"Score": visual_score, "Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
+    return {"Score": visual_score, "Statut": status, "Conditions": conditions, "cross_time": cross_time}
 
-def plot_ichimoku(df, pair, granularity):
-    fig, ax = plt.subplots(figsize=(12, 7))
-    ax.plot(df.index, df["Close"], label="Prix", color="black", lw=1.5)
-    ax.plot(df.index, df["Tenkan"], label="Tenkan (Conversion)", color="blue", lw=1)
-    ax.plot(df.index, df["Kijun"], label="Kijun (Base)", color="red", lw=1)
-    ax.plot(df.index, df["Chikou"], label="Chikou (Lagging)", color="purple", lw=1.2, ls='--')
-    ax.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=df["Senkou_A"] >= df["Senkou_B"], color='lightgreen', alpha=0.4, label="Kumo Haussier")
-    ax.fill_between(df.index, df["Senkou_A"], df["Senkou_B"], where=df["Senkou_A"] < df["Senkou_B"], color='lightcoral', alpha=0.4, label="Kumo Baissier")
-    ax.set_title(f"Ichimoku pour {pair} ({granularity})", fontsize=16)
-    ax.legend()
-    ax.grid(True, linestyle='--', alpha=0.6)
-    plt.tight_layout()
-    return fig
 
 st.title("🔎 Scanner Ichimoku Pro (M15, H1 & H4)")
 st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps M15, H1 et H4.")
@@ -230,7 +204,7 @@ if client:
                     row.update(analysis["Conditions"])
                     
                     row["cross_time_obj"] = analysis["cross_time"]
-                    all_results_by_tf[timeframe].append((row, analysis.get("data")))
+                    all_results_by_tf[timeframe].append(row)
                     if pd.notna(analysis["cross_time"]):
                         all_cross_times.append(analysis["cross_time"])
 
@@ -241,7 +215,7 @@ if client:
             st.subheader(f"📊 Tableau de Bord des Résultats ({timeframe})")
             if results:
                 display_data = []
-                for row_data, _ in results:
+                for row_data in results:
                     cross_time = row_data["cross_time_obj"]
                     if pd.notna(cross_time):
                         localized_time = cross_time.tz_convert(selected_timezone)
@@ -268,17 +242,6 @@ if client:
                 results_df = results_df.drop(columns=['sort_time', 'is_starred'])
 
                 st.dataframe(results_df, use_container_width=True, height=600)
-                
-                strong_signals = [res for res in results if "FORT" in res[0]["Tendance"]]
-                if strong_signals:
-                    st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
-                    for result, data in strong_signals:
-                        with st.expander(f"Graphique pour {result['Paire']} - {result['Tendance']}", expanded=True):
-                            fig = plot_ichimoku(data, result['Paire'], timeframe)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                else:
-                    st.info(f"Aucun signal fort détecté sur {timeframe} pour cette analyse.")
             else:
                 st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
 else:
