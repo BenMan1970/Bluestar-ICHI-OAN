@@ -147,7 +147,6 @@ def analyze_ichimoku_status(df_full):
 
     return {"Score": visual_score, "Statut": status, "Conditions": conditions, "cross_time": cross_time}
 
-
 st.title("🔎 Scanner Ichimoku Pro (M15, H1 & H4)")
 st.markdown("Analyse simultanée des conditions Ichimoku sur les unités de temps M15, H1 et H4.")
 
