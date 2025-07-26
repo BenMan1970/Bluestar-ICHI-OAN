@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -60,42 +59,69 @@ def find_last_tk_cross_info(df):
     else:
         return pd.NaT, "Neutre"
 
+# --- DÉBUT DE LA SECTION MODIFIÉE ---
+# La fonction suivante a été réécrite pour implémenter la nouvelle logique de scoring.
+
 def analyze_ichimoku_status(df_full):
-    if df_full is None or len(df_full) < 79:
-        return {"Statut": "Données Insuffisantes", "Conditions": {}, "cross_time": pd.NaT}
+    if df_full is None or len(df_full) < 79: # Assez de données pour tous les calculs
+        return {"Score": "N/A", "Statut": "Données Insuffisantes", "data": None, "cross_time": pd.NaT}
 
-    cross_time, cross_direction = find_last_tk_cross_info(df_full)
-    last_closed = df_full.iloc[-2]
+    cross_time, _ = find_last_tk_cross_info(df_full)
+    last_closed = df_full.iloc[-2] # On analyse la dernière bougie clôturée
+    score = 0
 
-    conditions = {"Nuage": "Neutre", "Croisement TK": cross_direction, "Chikou Libre": "Neutre", "Kumo Futur": "Neutre"}
+    # 1. Prix par rapport au nuage
+    if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
+        kumo_high = max(last_closed["Senkou_A"], last_closed["Senkou_B"])
+        kumo_low = min(last_closed["Senkou_A"], last_closed["Senkou_B"])
+        if last_closed["Close"] > kumo_high:
+            score += 1
+        elif last_closed["Close"] < kumo_low:
+            score -= 1
 
-    if last_closed["Close"] > last_closed["Senkou_A"] and last_closed["Close"] > last_closed["Senkou_B"]: conditions["Nuage"] = "✅ Haussier"
-    elif last_closed["Close"] < last_closed["Senkou_A"] and last_closed["Close"] < last_closed["Senkou_B"]: conditions["Nuage"] = "🔴 Baissier"
+    # 2. Tenkan / Kijun
+    if pd.notna(last_closed["Tenkan"]) and pd.notna(last_closed["Kijun"]):
+        if last_closed["Tenkan"] > last_closed["Kijun"]:
+            score += 1
+        elif last_closed["Tenkan"] < last_closed["Kijun"]:
+            score -= 1
 
-    if len(df_full) >= 60:
-        chikou_index = -26
-        if len(df_full) + chikou_index >= 10:
-            chikou_value = df_full.iloc[chikou_index]["Chikou"]
-            window_prices = df_full.iloc[chikou_index-5:chikou_index+5]
-            if pd.notna(chikou_value):
-                if chikou_value > window_prices["High"].max():
-                    conditions["Chikou Libre"] = "✅ Haussier"
-                elif chikou_value < window_prices["Low"].min():
-                    conditions["Chikou Libre"] = "🔴 Baissier"
-                else:
-                    conditions["Chikou Libre"] = "🟡 Neutre"
+    # 3. Kumo futur
+    if pd.notna(last_closed["Senkou_A"]) and pd.notna(last_closed["Senkou_B"]):
+        if last_closed["Senkou_A"] > last_closed["Senkou_B"]:
+            score += 1
+        elif last_closed["Senkou_A"] < last_closed["Senkou_B"]:
+            score -= 1
 
-    if last_closed["Senkou_A"] > last_closed["Senkou_B"]: conditions["Kumo Futur"] = "✅ Haussier"
-    elif last_closed["Senkou_A"] < last_closed["Senkou_B"]: conditions["Kumo Futur"] = "🔴 Baissier"
+    # 4. Chikou
+    # La valeur de Chikou est le prix de clôture actuel, projeté 26 périodes en arrière.
+    # On le compare donc au prix et au nuage d'il y a 26 périodes.
+    if len(df_full) > 27:
+        chikou_value = last_closed['Close']
+        past_candle = df_full.iloc[-27] # Bougie d'il y a 26 périodes (index -27)
 
-    is_buy = all(c.startswith("✅") for c in conditions.values())
-    is_sell = all(c.startswith("🔴") for c in conditions.values())
+        if pd.notna(past_candle['High']) and pd.notna(past_candle['Senkou_A']) and pd.notna(past_candle['Senkou_B']):
+            past_price_high = past_candle['High']
+            past_kumo_high = max(past_candle['Senkou_A'], past_candle['Senkou_B'])
 
-    status = "🟡 Neutre"
-    if is_buy: status = "🟢 ACHAT FORT"
-    elif is_sell: status = "🔴 VENTE FORTE"
+            # Condition Haussière : Chikou au-dessus des prix ET du nuage
+            if chikou_value > past_price_high and chikou_value > past_kumo_high:
+                score += 1
+            else:
+                # Condition Baissière : En dessous ou bloqué (tout ce qui n'est pas la condition haussière)
+                score -= 1
+    
+    # Déterminer le statut final basé sur le score
+    statut_text = f"({score}/4)" if abs(score) < 4 else ""
+    if score == 4: status = "🟢 ACHAT FORT"
+    elif score > 0: status = f"✅ Haussier {statut_text}"
+    elif score == -4: status = "🔴 VENTE FORTE"
+    elif score < 0: status = f"🔴 Baissier ({abs(score)}/4)"
+    else: status = "🟡 Neutre (0/4)"
 
-    return {"Statut": status, "Conditions": conditions, "data": df_full, "cross_time": cross_time}
+    return {"Score": f"{score}/4", "Statut": status, "data": df_full, "cross_time": cross_time}
+
+# --- FIN DE LA SECTION MODIFIÉE ---
 
 def plot_ichimoku(df, pair, granularity):
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -159,10 +185,16 @@ if client:
                     df_ichimoku = calculate_ichimoku(df_full.copy())
                     analysis = analyze_ichimoku_status(df_ichimoku)
 
-                    row = {"Paire": pair, "Statut Global": analysis["Statut"]}
-                    row.update(analysis["Conditions"])
+                    # --- DÉBUT DE LA SECTION MODIFIÉE ---
+                    # Création des lignes pour le DataFrame avec les nouvelles colonnes Score et Tendance
+                    row = {
+                        "Paire": pair,
+                        "Score": analysis["Score"],
+                        "Tendance": analysis["Statut"]
+                    }
+                    # --- FIN DE LA SECTION MODIFIÉE ---
+                    
                     row["cross_time_obj"] = analysis["cross_time"]
-
                     all_results_by_tf[timeframe].append((row, analysis.get("data")))
                     if pd.notna(analysis["cross_time"]):
                         all_cross_times.append(analysis["cross_time"])
@@ -187,7 +219,12 @@ if client:
                     del row_data["cross_time_obj"]
                     display_data.append(row_data)
 
+                # --- DÉBUT DE LA SECTION MODIFIÉE ---
+                # Mise à jour du nom de la colonne pour le tri et l'affichage
                 results_df = pd.DataFrame(display_data).set_index("Paire")
+                results_df = results_df.rename(columns={"Tendance": "Tendance Actuelle"})
+                # --- FIN DE LA SECTION MODIFIÉE ---
+
                 results_df['is_starred'] = results_df['Dernier Croisement TK'].str.contains("⭐", na=False)
                 results_df['sort_time'] = pd.to_datetime(results_df['Dernier Croisement TK'].str.replace(" ⭐", "", regex=False), errors='coerce')
                 results_df = results_df.sort_values(by=['is_starred', 'sort_time'], ascending=[False, False])
@@ -195,11 +232,14 @@ if client:
 
                 st.dataframe(results_df, use_container_width=True, height=600)
 
-                strong_signals = [res for res in results if "FORT" in res[0]["Statut Global"]]
+                # --- DÉBUT DE LA SECTION MODIFIÉE ---
+                # Mise à jour de la condition pour détecter les signaux forts
+                strong_signals = [res for res in results if "FORT" in res[0]["Tendance"]]
+                # --- FIN DE LA SECTION MODIFIÉE ---
                 if strong_signals:
                     st.markdown(f"**Graphiques des signaux forts détectés sur {timeframe} :**")
                     for result, data in strong_signals:
-                        with st.expander(f"Graphique pour {result['Paire']} - {result['Statut Global']}", expanded=True):
+                        with st.expander(f"Graphique pour {result['Paire']} - {result['Tendance']}", expanded=True):
                             fig = plot_ichimoku(data, result['Paire'], timeframe)
                             st.pyplot(fig)
                             plt.close(fig)
@@ -209,3 +249,4 @@ if client:
                 st.warning(f"Aucune donnée n'a pu être récupérée pour l'unité de temps {timeframe} ou aucun croisement n'a été trouvé.")
 else:
     st.error("L'application ne peut pas démarrer. Vérifiez vos secrets OANDA.")
+     
